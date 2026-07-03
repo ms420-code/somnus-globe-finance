@@ -43,14 +43,14 @@
 -->
 <style>
   :root{
-    --bg:#05070D;
+    --bg:#0D1B2E;
     --green:#00FF88;
     --purple:#7B00FF;
     --red:#FF3B5C;
     --amber:#FFB000;
     --cyan:#00E5FF;
     --dim:#5a6b78;
-    --panel-bg:rgba(6,12,20,0.82);
+    --panel-bg:rgba(10,20,36,0.85);
     --border:rgba(0,255,136,0.25);
     --mono: 'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
   }
@@ -81,7 +81,7 @@
 
   /* ---------- LOADING SCREEN ---------- */
   #loading{
-    position:fixed;inset:0;z-index:200;background:#05070D;
+    position:fixed;inset:0;z-index:200;background:#0D1B2E;
     display:flex;flex-direction:column;align-items:center;justify-content:center;
     transition:opacity 0.8s ease;
   }
@@ -104,7 +104,7 @@
     position:fixed;top:0;left:0;right:0;height:52px;z-index:30;
     display:flex;align-items:center;justify-content:space-between;
     padding:0 18px;
-    background:linear-gradient(180deg, rgba(5,7,13,0.95), rgba(5,7,13,0.55));
+    background:linear-gradient(180deg, rgba(13,27,46,0.95), rgba(13,27,46,0.55));
     border-bottom:1px solid var(--border);
     backdrop-filter:blur(4px);
   }
@@ -151,7 +151,7 @@
   /* ---------- TOOLTIP ---------- */
   #tooltip{
     position:fixed;z-index:60;pointer-events:none;
-    background:rgba(4,10,16,0.92);border:1px solid var(--green);border-radius:6px;
+    background:rgba(9,19,34,0.92);border:1px solid var(--green);border-radius:6px;
     padding:8px 12px;font-size:11px;color:var(--green);display:none;
     box-shadow:0 0 18px rgba(0,255,136,0.3);min-width:140px;
   }
@@ -181,7 +181,7 @@
   /* ---------- BOTTOM TICKER ---------- */
   #tickerWrap{
     position:fixed;left:0;right:0;bottom:0;height:34px;z-index:30;
-    background:linear-gradient(0deg, rgba(5,7,13,0.95), rgba(5,7,13,0.6));
+    background:linear-gradient(0deg, rgba(13,27,46,0.95), rgba(13,27,46,0.6));
     border-top:1px solid var(--border);overflow:hidden;display:flex;align-items:center;
   }
   #ticker{display:flex;white-space:nowrap;animation:scrollTicker 40s linear infinite;padding-left:100%;}
@@ -481,7 +481,7 @@ const canvas = document.getElementById('globeCanvas');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x05070D, 1);
+renderer.setClearColor(0x0D1B2E, 1);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 2000);

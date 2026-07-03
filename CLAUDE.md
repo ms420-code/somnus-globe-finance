@@ -42,8 +42,8 @@ assets to break.
 
 ## Visual identity — holographic night-mode, not realistic map
 
-- Palette (CSS vars in `index.html`): background `#05070D`, green `#00FF88`,
-  purple `#7B00FF`, red `#FF3B5C`, amber `#FFB000`, cyan `#00E5FF`.
+- Palette (CSS vars in `index.html`): background `#0D1B2E` (deep ocean blue),
+  green `#00FF88`, purple `#7B00FF`, red `#FF3B5C`, amber `#FFB000`, cyan `#00E5FF`.
   Borders are soft ice blue `rgba(180,220,255,…)`; land fill deep navy `#0A1020`.
 - **No realistic textures** — no satellite imagery, no terrain, no roads.
   Clean vector borders + dark fills only. Monospace type, scanlines, glow.
