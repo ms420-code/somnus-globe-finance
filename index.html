@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TERRA — Global Financial Command Center</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--
+  ============================================================================
+  TERRA — 3D Financial Earth Command Center (prototype)
+  ============================================================================
+  Single-file prototype. Three.js (r128, classic build) renders a stylized
+  dot-matrix globe. All data below is embedded MOCK DATA, structured so a
+  live backend/API can replace each block later without touching render code.
+
+  HOW TO SWAP MOCK DATA FOR LIVE APIS
+  ------------------------------------
+  Every layer has one data array/object, each entry documented with the
+  shape a live endpoint should return:
+
+    MARKET_DATA   -> GET /api/markets           [{ iso, name, index, change }]
+    SESSIONS_DATA -> GET /api/exchanges          [{ name, city, lat, lon, tz, open, close }]
+                      (open/close are local HH:MM; OPEN/CLOSED is derived
+                       client-side from `tz` + current time — or have the
+                       API return `isOpen` directly and drop the derivation)
+    OIL_DATA      -> GET /api/commodities/oil    [{ name, lat, lon, bpd }]
+    POP_HEAT      -> GET /api/population/density [{ name, lat, lon, radius, intensity }]
+    CITIES_DATA   -> GET /api/cities/mega        [{ name, lat, lon, population }]
+    METALS_DATA   -> GET /api/mining             [{ name, lat, lon, metal }]
+    TRADE_ROUTES  -> GET /api/trade/routes       [{ from:[lat,lon], to:[lat,lon], label }]
+    TICKER_DATA   -> GET /api/ticker             [{ symbol, value, change }]
+
+  Country heatmap coloring expects: { iso: "US", change: +0.8 } (percent, signed).
+  Swap the fetch in `loadMockData()` for real network calls; keep the same
+  shapes and every render function below works unchanged.
+
+  COUNTRY GEOGRAPHY
+  -----------------
+  Real country borders/fills come from world-atlas TopoJSON (Natural Earth)
+  loaded from CDN at boot — see GEO_URL below. 110m resolution for speed;
+  change GEO_RESOLUTION to '50m' for finer borders. The heatmap layer tints
+  actual country fills, matched by ISO code via ISO_N3_TO_A2.
+  ============================================================================
+-->
+<style>
+  :root{
+    --bg:#05070D;
+    --green:#00FF88;
+    --purple:#7B00FF;
+    --red:#FF3B5C;
+    --amber:#FFB000;
+    --cyan:#00E5FF;
+    --dim:#5a6b78;
+    --panel-bg:rgba(6,12,20,0.82);
+    --border:rgba(0,255,136,0.25);
+    --mono: 'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;width:100%;height:100%;
+    background:var(--bg);
+    color:var(--green);
+    font-family:var(--mono);
+    overflow:hidden;
+    user-select:none;
+  }
+  #app{position:fixed;inset:0;}
+  #globeCanvas{position:absolute;inset:0;display:block;}
+
+  /* scanline / grain overlay */
+  #overlay{
+    position:fixed;inset:0;pointer-events:none;z-index:50;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.10) 0px, rgba(0,0,0,0.10) 1px, transparent 1px, transparent 3px);
+    mix-blend-mode:overlay;
+    opacity:0.35;
+  }
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:49;
+    box-shadow: inset 0 0 220px rgba(0,0,0,0.85);
+  }
+
+  /* ---------- LOADING SCREEN ---------- */
+  #loading{
+    position:fixed;inset:0;z-index:200;background:#05070D;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    transition:opacity 0.8s ease;
+  }
+  #loading .logo{
+    font-size:48px;letter-spacing:14px;font-weight:700;color:var(--green);
+    text-shadow:0 0 20px rgba(0,255,136,0.8),0 0 60px rgba(0,255,136,0.4);
+    margin-bottom:18px;
+  }
+  #bootLines{
+    width:520px;max-width:80vw;height:180px;font-size:12px;color:#3ddc97;
+    line-height:1.6;overflow:hidden;
+  }
+  #bootLines div{opacity:0;animation:fadeIn 0.15s forwards;}
+  .bootBar{width:520px;max-width:80vw;height:4px;background:rgba(0,255,136,0.12);margin-top:14px;border-radius:2px;overflow:hidden;}
+  .bootBar > div{height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--purple));box-shadow:0 0 12px var(--green);transition:width 0.25s linear;}
+  @keyframes fadeIn{to{opacity:1;}}
+
+  /* ---------- TOP BAR ---------- */
+  #topbar{
+    position:fixed;top:0;left:0;right:0;height:52px;z-index:30;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 18px;
+    background:linear-gradient(180deg, rgba(5,7,13,0.95), rgba(5,7,13,0.55));
+    border-bottom:1px solid var(--border);
+    backdrop-filter:blur(4px);
+  }
+  #brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:4px;font-size:16px;color:var(--green);text-shadow:0 0 10px rgba(0,255,136,0.6);}
+  #brand .dot{width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);animation:blink 1.4s infinite;}
+  @keyframes blink{0%,100%{opacity:1;}50%{opacity:0.25;}}
+  #clocks{display:flex;gap:22px;}
+  .clock{display:flex;flex-direction:column;align-items:center;font-size:11px;color:var(--dim);min-width:88px;}
+  .clock .city{letter-spacing:2px;font-size:9px;color:#8ea8b5;}
+  .clock .time{font-size:15px;color:var(--green);font-weight:600;}
+  .pill{margin-top:2px;font-size:8px;padding:1px 6px;border-radius:8px;letter-spacing:1px;}
+  .pill.open{background:rgba(0,255,136,0.15);color:var(--green);border:1px solid var(--green);}
+  .pill.closed{background:rgba(255,59,92,0.12);color:var(--red);border:1px solid var(--red);}
+  #utcWrap{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--purple);}
+
+  /* ---------- LEFT LAYER PANEL ---------- */
+  #layerPanel{
+    position:fixed;top:70px;left:14px;width:220px;z-index:30;
+    background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;
+    padding:12px 14px;box-shadow:0 0 24px rgba(0,255,136,0.06);
+  }
+  #layerPanel h3{margin:0 0 10px;font-size:11px;letter-spacing:3px;color:#8ea8b5;font-weight:600;}
+  .layerRow{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px;}
+  .layerRow:last-child{border-bottom:none;}
+  .layerRow .lbl{display:flex;flex-direction:column;}
+  .layerRow .lbl .k{color:#4d5c66;font-size:9px;}
+  .switch{position:relative;width:34px;height:18px;border-radius:10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);cursor:pointer;flex-shrink:0;}
+  .switch .knob{position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;background:#556;transition:all 0.2s;}
+  .switch.on{background:rgba(0,255,136,0.18);border-color:var(--green);box-shadow:0 0 10px rgba(0,255,136,0.4);}
+  .switch.on .knob{left:17px;background:var(--green);box-shadow:0 0 8px var(--green);}
+  #resetBtn{margin-top:12px;width:100%;padding:8px;background:rgba(123,0,255,0.1);border:1px solid var(--purple);color:var(--purple);letter-spacing:2px;font-size:10px;border-radius:6px;cursor:pointer;font-family:var(--mono);}
+  #resetBtn:hover{background:rgba(123,0,255,0.25);}
+  #hints{margin-top:10px;font-size:9px;color:#3a4650;line-height:1.6;}
+
+  /* ---------- LEGEND ---------- */
+  #legend{
+    position:fixed;left:14px;bottom:78px;z-index:29;
+    background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;
+    padding:8px 12px;font-size:9px;color:#8ea8b5;display:none;gap:6px;flex-direction:column;
+  }
+  #legend .row{display:flex;align-items:center;gap:6px;}
+  #legend .sw{width:9px;height:9px;border-radius:50%;}
+
+  /* ---------- TOOLTIP ---------- */
+  #tooltip{
+    position:fixed;z-index:60;pointer-events:none;
+    background:rgba(4,10,16,0.92);border:1px solid var(--green);border-radius:6px;
+    padding:8px 12px;font-size:11px;color:var(--green);display:none;
+    box-shadow:0 0 18px rgba(0,255,136,0.3);min-width:140px;
+  }
+  #tooltip .t-title{font-weight:700;letter-spacing:1px;margin-bottom:4px;font-size:12px;}
+  #tooltip .t-row{display:flex;justify-content:space-between;gap:14px;color:#9fb3bd;font-size:10px;}
+  #tooltip .t-row span:last-child{color:var(--green);}
+
+  /* ---------- RIGHT SLIDE PANEL ---------- */
+  #profilePanel{
+    position:fixed;top:60px;right:-360px;width:320px;bottom:70px;z-index:35;
+    background:var(--panel-bg);border:1px solid var(--border);border-radius:8px 0 0 8px;
+    padding:18px;transition:right 0.4s cubic-bezier(.2,.9,.25,1);
+    box-shadow:-4px 0 30px rgba(0,0,0,0.5);
+    overflow-y:auto;
+  }
+  #profilePanel.show{right:14px;}
+  #profilePanel .close{position:absolute;top:10px;right:12px;cursor:pointer;color:var(--dim);font-size:16px;}
+  #profilePanel h2{margin:0 0 2px;font-size:18px;color:var(--green);letter-spacing:1px;}
+  #profilePanel .sub{font-size:10px;color:var(--dim);letter-spacing:2px;margin-bottom:16px;}
+  .statRow{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;}
+  .statRow .k{color:#8ea8b5;}
+  .statRow .v{color:var(--green);font-weight:600;}
+  .statRow .v.neg{color:var(--red);}
+  #profilePanel .resList{margin-top:14px;}
+  #profilePanel .resList .tag{display:inline-block;margin:3px 4px 0 0;padding:3px 8px;font-size:9px;border:1px solid var(--purple);color:var(--purple);border-radius:10px;}
+
+  /* ---------- BOTTOM TICKER ---------- */
+  #tickerWrap{
+    position:fixed;left:0;right:0;bottom:0;height:34px;z-index:30;
+    background:linear-gradient(0deg, rgba(5,7,13,0.95), rgba(5,7,13,0.6));
+    border-top:1px solid var(--border);overflow:hidden;display:flex;align-items:center;
+  }
+  #ticker{display:flex;white-space:nowrap;animation:scrollTicker 40s linear infinite;padding-left:100%;}
+  .tItem{display:flex;align-items:center;gap:6px;padding:0 26px;font-size:12px;}
+  .tItem .sym{color:#8ea8b5;letter-spacing:1px;}
+  .tItem .val{color:#dfe8ec;}
+  .tItem .chg.up{color:var(--green);}
+  .tItem .chg.down{color:var(--red);}
+  @keyframes scrollTicker{from{transform:translateX(0);}to{transform:translateX(-100%);}}
+
+  ::-webkit-scrollbar{width:5px;}
+  ::-webkit-scrollbar-thumb{background:rgba(0,255,136,0.3);border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="globeCanvas"></canvas>
+
+  <!-- LOADING -->
+  <div id="loading">
+    <div class="logo">TERRA</div>
+    <div id="bootLines"></div>
+    <div class="bootBar"><div id="bootFill"></div></div>
+  </div>
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div id="brand"><span class="dot"></span> TERRA <span style="color:#3a4650;font-weight:400;letter-spacing:1px;font-size:10px;">// GLOBAL FINANCIAL COMMAND</span></div>
+    <div id="clocks"></div>
+    <div id="utcWrap"><span id="utcTime">--:--:--</span> UTC</div>
+  </div>
+
+  <!-- LEFT LAYER PANEL -->
+  <div id="layerPanel">
+    <h3>DATA LAYERS</h3>
+    <div id="layerList"></div>
+    <button id="resetBtn">⟲ RESET VIEW</button>
+    <div id="hints">[1-7] toggle layers &nbsp; [R] reset<br>drag = rotate &middot; scroll = zoom</div>
+  </div>
+
+  <div id="legend"></div>
+
+  <!-- TOOLTIP -->
+  <div id="tooltip"></div>
+
+  <!-- RIGHT PROFILE PANEL -->
+  <div id="profilePanel">
+    <span class="close" id="profileClose">✕</span>
+    <div id="profileBody"></div>
+  </div>
+
+  <!-- TICKER -->
+  <div id="tickerWrap"><div id="ticker"></div></div>
+
+  <div id="vignette"></div>
+  <div id="overlay"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script>
+/* ============================================================================
+   MOCK DATA — see header comment for API replacement shapes
+   ============================================================================ */
+
+const MARKET_DATA = [
+  {iso:"US", name:"S&P 500",   lat:38, lon:-97,  change:0.8},
+  {iso:"DE", name:"DAX",       lat:51, lon:10,   change:-0.4},
+  {iso:"JP", name:"Nikkei",    lat:36, lon:138,  change:1.2},
+  {iso:"IN", name:"Sensex",    lat:21, lon:79,   change:0.6},
+  {iso:"BR", name:"Bovespa",   lat:-10,lon:-52,  change:-1.1},
+  {iso:"GB", name:"FTSE 100",  lat:54, lon:-2,   change:0.3},
+  {iso:"FR", name:"CAC 40",    lat:47, lon:2,    change:-0.2},
+  {iso:"CN", name:"SSE Comp",  lat:35, lon:103,  change:-0.7},
+  {iso:"CA", name:"TSX",       lat:56, lon:-106, change:0.5},
+  {iso:"AU", name:"ASX 200",   lat:-25,lon:134,  change:0.9},
+  {iso:"KR", name:"KOSPI",     lat:36, lon:128,  change:1.5},
+  {iso:"MX", name:"IPC",       lat:23, lon:-102, change:-0.3},
+  {iso:"RU", name:"MOEX",      lat:61, lon:90,   change:2.1},
+  {iso:"IT", name:"FTSE MIB",  lat:42, lon:12,   change:0.1},
+  {iso:"ES", name:"IBEX 35",   lat:40, lon:-4,   change:-0.6},
+  {iso:"NL", name:"AEX",       lat:52, lon:5,    change:0.4},
+  {iso:"CH", name:"SMI",       lat:47, lon:8,    change:0.2},
+  {iso:"SE", name:"OMX Stkh",  lat:60, lon:15,   change:0.7},
+  {iso:"ZA", name:"JSE",       lat:-29,lon:24,   change:-0.9},
+  {iso:"SA", name:"TASI",      lat:24, lon:45,   change:0.3},
+  {iso:"ID", name:"JCI",       lat:-2, lon:118,  change:1.0},
+  {iso:"SG", name:"STI",       lat:1.3,lon:103.8,change:0.4},
+  {iso:"HK", name:"HSI",       lat:22.3,lon:114.2,change:-1.8},
+  {iso:"TR", name:"BIST 100",  lat:39, lon:35,   change:3.2},
+  {iso:"AR", name:"MERVAL",    lat:-34,lon:-64,  change:4.5},
+];
+const SESSIONS_DATA = [
+  {name:"NYSE",  city:"New York",  lat:40.7, lon:-74.0, tz:"America/New_York", open:9.5,  close:16.0},
+  {name:"LSE",   city:"London",    lat:51.5, lon:-0.1,  tz:"Europe/London",    open:8.0,  close:16.5},
+  {name:"XETRA", city:"Frankfurt", lat:50.1, lon:8.7,   tz:"Europe/Berlin",    open:9.0,  close:17.5},
+  {name:"TSE",   city:"Tokyo",     lat:35.7, lon:139.7, tz:"Asia/Tokyo",       open:9.0,  close:15.0},
+  {name:"HKEX",  city:"Hong Kong", lat:22.3, lon:114.2, tz:"Asia/Hong_Kong",   open:9.5,  close:16.0},
+  {name:"ASX",   city:"Sydney",    lat:-33.9,lon:151.2, tz:"Australia/Sydney",open:10.0, close:16.0},
+  {name:"NSE",   city:"Mumbai",    lat:19.1, lon:72.9,  tz:"Asia/Kolkata",     open:9.25, close:15.5},
+];
+
+const OIL_DATA = [
+  {name:"Ghawar, Saudi Arabia", lat:25.4, lon:49.6,  bpd:11.0},
+  {name:"Permian Basin, USA",   lat:31.8, lon:-102.5,bpd:6.0},
+  {name:"West Siberia, Russia", lat:61.0, lon:70.0,  bpd:10.0},
+  {name:"Alberta, Canada",      lat:56.0, lon:-111.5,bpd:4.5},
+  {name:"Rumaila, Iraq",        lat:30.4, lon:47.4,  bpd:4.4},
+  {name:"Abu Dhabi, UAE",       lat:24.0, lon:53.8,  bpd:3.2},
+  {name:"Orinoco Belt, Venezuela",lat:8.5,lon:-63.0, bpd:0.8},
+  {name:"Niger Delta, Nigeria", lat:5.0,  lon:6.5,   bpd:1.3},
+  {name:"Al-Burgan, Kuwait",    lat:29.0, lon:47.9,  bpd:2.7},
+  {name:"Campos Basin, Brazil", lat:-22.0,lon:-40.5, bpd:3.1},
+];
+
+const POP_HEAT = [
+  {name:"Gangetic Plain, India", lat:26, lon:80,  radius:12, intensity:1.0},
+  {name:"East China",            lat:32, lon:114, radius:12, intensity:0.95},
+  {name:"Java, Indonesia",       lat:-7, lon:110, radius:6,  intensity:0.85},
+  {name:"Nile Delta, Egypt",     lat:30, lon:31,  radius:5,  intensity:0.8},
+  {name:"Western Europe",        lat:49, lon:8,   radius:9,  intensity:0.75},
+  {name:"US East Coast",         lat:39, lon:-77, radius:8,  intensity:0.7},
+  {name:"Lagos Corridor, Nigeria",lat:6.5,lon:4,  radius:5,  intensity:0.65},
+  {name:"Bangladesh",            lat:24, lon:90,  radius:5,  intensity:0.9},
+];
+
+const CITIES_DATA = [
+  {name:"Tokyo",       lat:35.68, lon:139.69, pop:37.4},
+  {name:"Delhi",       lat:28.61, lon:77.21,  pop:32.9},
+  {name:"Shanghai",    lat:31.23, lon:121.47, pop:29.2},
+  {name:"Dhaka",       lat:23.81, lon:90.41,  pop:22.5},
+  {name:"São Paulo",   lat:-23.55,lon:-46.63, pop:22.4},
+  {name:"Mexico City", lat:19.43, lon:-99.13, pop:22.3},
+  {name:"Cairo",       lat:30.04, lon:31.24,  pop:21.7},
+  {name:"Mumbai",      lat:19.08, lon:72.88,  pop:21.3},
+  {name:"Beijing",     lat:39.90, lon:116.40, pop:21.3},
+  {name:"New York",    lat:40.71, lon:-74.01, pop:18.8},
+  {name:"Karachi",     lat:24.86, lon:67.01,  pop:16.8},
+  {name:"Istanbul",    lat:41.01, lon:28.98,  pop:15.5},
+  {name:"Kolkata",     lat:22.57, lon:88.36,  pop:15.1},
+  {name:"Lagos",       lat:6.52,  lon:3.38,   pop:14.9},
+  {name:"Manila",      lat:14.60, lon:120.98, pop:14.4},
+  {name:"Guangzhou",   lat:23.13, lon:113.26, pop:14.5},
+  {name:"Rio de Janeiro",lat:-22.91,lon:-43.17,pop:13.5},
+  {name:"Moscow",      lat:55.76, lon:37.62,  pop:12.6},
+  {name:"Los Angeles", lat:34.05, lon:-118.24,pop:12.5},
+  {name:"London",      lat:51.51, lon:-0.13,  pop:9.4},
+];
+
+const METALS_DATA = [
+  {name:"Witwatersrand Gold, South Africa", lat:-26.2, lon:27.9,  metal:"gold"},
+  {name:"Shandong Gold, China",             lat:37.4,  lon:118.5, metal:"gold"},
+  {name:"WA Goldfields, Australia",         lat:-30.7, lon:121.4, metal:"gold"},
+  {name:"Nevada Gold Belt, USA",            lat:40.8,  lon:-116.4,metal:"gold"},
+  {name:"Escondida, Chile",                 lat:-24.3, lon:-69.1, metal:"copper"},
+  {name:"Cerro Verde, Peru",                lat:-16.5, lon:-71.6, metal:"copper"},
+  {name:"Katanga, DRC",                     lat:-10.7, lon:25.5,  metal:"copper"},
+  {name:"Jiangxi Copper, China",            lat:29.7,  lon:115.8, metal:"copper"},
+  {name:"Greenbushes, Australia",           lat:-33.9, lon:116.1, metal:"lithium"},
+  {name:"Salar de Atacama, Chile",          lat:-23.5, lon:-68.2, metal:"lithium"},
+  {name:"Hombre Muerto, Argentina",         lat:-25.4, lon:-66.9, metal:"lithium"},
+  {name:"Bayan Obo, China",                 lat:41.8,  lon:109.9, metal:"rare-earth"},
+  {name:"Mountain Pass, USA",               lat:35.5,  lon:-115.5,metal:"rare-earth"},
+  {name:"Mount Weld, Australia",            lat:-28.9, lon:122.5, metal:"rare-earth"},
+];
+const METAL_COLORS = {gold:0xFFD700, copper:0xFF7F50, lithium:0x00E5FF, "rare-earth":0xB266FF};
+
+const TRADE_ROUTES = [
+  {from:[31.2,121.5], to:[34.0,-118.2], label:"Shanghai → Los Angeles"},
+  {from:[51.9,4.5],   to:[40.7,-74.0],  label:"Rotterdam → New York"},
+  {from:[1.35,103.8], to:[25.2,55.3],   label:"Singapore → Dubai"},
+  {from:[22.5,114.0], to:[53.5,10.0],   label:"Shenzhen → Hamburg"},
+  {from:[19.0,72.9],  to:[51.5,-0.1],   label:"Mumbai → London"},
+  {from:[-33.9,151.2],to:[35.7,139.7],  label:"Sydney → Tokyo"},
+];
+
+const TICKER_DATA = [
+  {sym:"S&P 500", val:"4,783.45", chg:0.82},
+  {sym:"NASDAQ",  val:"16,920.10", chg:1.10},
+  {sym:"DOW",     val:"38,150.30", chg:0.45},
+  {sym:"GOLD",    val:"$2,385.50", chg:0.34},
+  {sym:"OIL WTI", val:"$78.42", chg:-0.60},
+  {sym:"BTC/USD", val:"$67,230", chg:2.15},
+  {sym:"EUR/USD", val:"1.0845", chg:-0.12},
+  {sym:"DAX",     val:"17,650.20", chg:-0.38},
+  {sym:"NIKKEI",  val:"39,120.50", chg:1.22},
+  {sym:"US 10Y",  val:"4.28%", chg:0.03},
+];
+
+/* ============================================================================
+   UTIL
+   ============================================================================ */
+const GLOBE_R = 5;
+function latLonToVec3(lat, lon, r){
+  const phi = (90 - lat) * Math.PI/180;
+  const theta = (lon + 180) * Math.PI/180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+function lerp(a,b,t){return a+(b-a)*t;}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
+function makeCircleTexture(color){
+  const c = document.createElement('canvas'); c.width=c.height=64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.35,'rgba(255,255,255,0.7)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+function makeGlowTexture(){
+  const c = document.createElement('canvas'); c.width=c.height=256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(128,128,0,128,128,128);
+  g.addColorStop(0,'rgba(255,255,255,0.9)');
+  g.addColorStop(0.4,'rgba(255,255,255,0.25)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,256,256);
+  return new THREE.CanvasTexture(c);
+}
+
+/* ============================================================================
+   COUNTRY GEOMETRY CONFIG — real borders (Natural Earth via world-atlas)
+   ============================================================================ */
+const GEO_RESOLUTION = '110m'; // swap to '50m' for finer border detail
+const GEO_URL = `https://cdn.jsdelivr.net/npm/world-atlas@2/countries-${GEO_RESOLUTION}.json`;
+
+// world-atlas feature ids are numeric ISO 3166-1 codes; map to the alpha-2
+// codes used by MARKET_DATA (only countries we track need an entry).
+// Note: SG and HK are too small to exist in the 110m dataset — their heat
+// tint appears once GEO_RESOLUTION is bumped to 50m.
+const ISO_N3_TO_A2 = {
+  "840":"US","276":"DE","392":"JP","356":"IN","076":"BR","826":"GB","250":"FR",
+  "156":"CN","124":"CA","036":"AU","410":"KR","484":"MX","643":"RU","380":"IT",
+  "724":"ES","528":"NL","756":"CH","752":"SE","710":"ZA","682":"SA","360":"ID",
+  "702":"SG","344":"HK","792":"TR","032":"AR"
+};
+
+// inverse of latLonToVec3 — used to map a globe raycast hit back to lat/lon
+function vec3ToLatLon(p){
+  const r = p.length();
+  const lat = 90 - Math.acos(clamp(p.y/r,-1,1))*180/Math.PI;
+  let lon = Math.atan2(p.z,-p.x)*180/Math.PI - 180;
+  if(lon < -180) lon += 360;
+  return {lat, lon};
+}
+
+/* ============================================================================
+   BOOT SEQUENCE
+   ============================================================================ */
+const bootMsgs = [
+  "INITIALIZING TERRA CORE...",
+  "ESTABLISHING SATELLITE UPLINK...",
+  "LOADING MARKET FEEDS [25 EXCHANGES]...",
+  `LOADING COUNTRY GEOMETRY [NATURAL EARTH ${GEO_RESOLUTION.toUpperCase()}]...`,
+  "SYNCING TIME ZONES // SESSION STATUS...",
+  "MAPPING COMMODITY & TRADE VECTORS...",
+  "RENDERING ATMOSPHERE...",
+  "TERRA ONLINE."
+];
+let bootIdx=0;
+const bootLinesEl = document.getElementById('bootLines');
+const bootFillEl = document.getElementById('bootFill');
+function bootStep(){
+  if(bootIdx < bootMsgs.length){
+    // hold the last line ("TERRA ONLINE.") until country geometry is parsed
+    if(bootIdx === bootMsgs.length-1 && !(GEO.ready || GEO.failed)){
+      setTimeout(bootStep, 150);
+      return;
+    }
+    const d = document.createElement('div');
+    d.textContent = "> " + bootMsgs[bootIdx];
+    bootLinesEl.appendChild(d);
+    bootFillEl.style.width = ((bootIdx+1)/bootMsgs.length*100)+"%";
+    bootIdx++;
+    setTimeout(bootStep, 260);
+  } else {
+    setTimeout(()=>{
+      const el = document.getElementById('loading');
+      el.style.opacity='0';
+      setTimeout(()=>el.style.display='none', 850);
+    }, 350);
+  }
+}
+setTimeout(bootStep, 300);
+
+/* ============================================================================
+   THREE.JS SCENE SETUP
+   ============================================================================ */
+const canvas = document.getElementById('globeCanvas');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x05070D, 1);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 2000);
+camera.position.set(0,0,13);
+
+const ambient = new THREE.AmbientLight(0x223344, 1.2);
+scene.add(ambient);
+
+// starfield with slight parallax
+const starGroup = new THREE.Group(); scene.add(starGroup);
+function makeStars(count, spread, size, color){
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(count*3);
+  for(let i=0;i<count;i++){
+    const r = spread*(0.6+Math.random()*0.4);
+    const th = Math.random()*Math.PI*2, ph = Math.acos(2*Math.random()-1);
+    pos[i*3]   = r*Math.sin(ph)*Math.cos(th);
+    pos[i*3+1] = r*Math.sin(ph)*Math.sin(th);
+    pos[i*3+2] = r*Math.cos(ph);
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const mat = new THREE.PointsMaterial({color, size, map:makeCircleTexture(), transparent:true, depthWrite:false, blending:THREE.AdditiveBlending});
+  return new THREE.Points(geo, mat);
+}
+starGroup.add(makeStars(1200, 400, 1.4, 0xffffff));
+starGroup.add(makeStars(500, 700, 2.2, 0x88aaff));
+
+/* ---------------- GLOBE CORE (day/night shader + country fill texture) ---------------- */
+// equirectangular canvas the country fills are painted into (navy base, heat
+// tint, hover lighten) — sampled by the globe shader, so all fills cost one
+// texture lookup and zero extra meshes
+const TEX_W = 2048, TEX_H = 1024;
+const landCanvas = document.createElement('canvas');
+landCanvas.width = TEX_W; landCanvas.height = TEX_H;
+const landCtx = landCanvas.getContext('2d');
+const landTexture = new THREE.CanvasTexture(landCanvas);
+landTexture.minFilter = THREE.LinearFilter;
+landTexture.generateMipmaps = false;
+
+const sunDir = new THREE.Vector3(1,0,0);
+const globeMat = new THREE.ShaderMaterial({
+  uniforms:{
+    sunDirection:{value:sunDir},
+    dayColor:{value:new THREE.Color(0x061424)},
+    nightColor:{value:new THREE.Color(0x010409)},
+    rimColor:{value:new THREE.Color(0x00ff88)},
+    landTex:{value:landTexture},
+  },
+  vertexShader:`
+    varying vec3 vNormal;
+    varying vec2 vUv;
+    void main(){
+      vNormal = normalize(normalMatrix * normal);
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }
+  `,
+  fragmentShader:`
+    uniform vec3 sunDirection; uniform vec3 dayColor; uniform vec3 nightColor; uniform vec3 rimColor;
+    uniform sampler2D landTex;
+    varying vec3 vNormal; varying vec2 vUv;
+    void main(){
+      float ndotl = dot(normalize(vNormal), normalize(sunDirection));
+      float mixF = smoothstep(-0.15, 0.15, ndotl);
+      vec3 base = mix(nightColor, dayColor, mixF);
+      // country fills: rgb = fill color, a = land coverage; land dims on the
+      // night side so the terminator still reads, plus a tiny lift so land
+      // always sits above the ocean floor color
+      vec4 land = texture2D(landTex, vUv);
+      vec3 landCol = land.rgb * mix(0.5, 1.2, mixF) + vec3(0.015, 0.03, 0.055);
+      base = mix(base, landCol, land.a);
+      float term = 1.0 - abs(ndotl);
+      term = pow(term, 8.0) * smoothstep(-0.2,0.2,ndotl) * smoothstep(0.2,-0.2,ndotl);
+      base += rimColor * term * 0.6;
+      gl_FragColor = vec4(base, 1.0);
+    }
+  `
+});
+const globeCore = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R, 96, 96), globeMat);
+scene.add(globeCore);
+
+// lat/lon wireframe grid (subtle)
+(function(){
+  const g = new THREE.SphereGeometry(GLOBE_R*1.001, 24, 16);
+  const wire = new THREE.WireframeGeometry(g);
+  const mat = new THREE.LineBasicMaterial({color:0x1a3d4d, transparent:true, opacity:0.25});
+  scene.add(new THREE.LineSegments(wire, mat));
+})();
+
+// fresnel atmosphere glow
+const atmoMat = new THREE.ShaderMaterial({
+  uniforms:{glowColor:{value:new THREE.Color(0x00ff88)}},
+  vertexShader:`
+    varying vec3 vNormal;
+    void main(){
+      vNormal = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }`,
+  fragmentShader:`
+    uniform vec3 glowColor; varying vec3 vNormal;
+    void main(){
+      float intensity = pow(0.68 - dot(vNormal, vec3(0,0,1.0)), 3.0);
+      gl_FragColor = vec4(glowColor, clamp(intensity,0.0,1.0)*0.9);
+    }`,
+  side:THREE.BackSide, blending:THREE.AdditiveBlending, transparent:true, depthWrite:false
+});
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R*1.12, 64,64), atmoMat);
+scene.add(atmo);
+
+/* ---------------- REAL COUNTRY BORDERS + FILLS (Natural Earth) ---------------- */
+function heatColor(change){
+  const c = new THREE.Color();
+  if(change>=0) c.lerpColors(new THREE.Color(0x123322), new THREE.Color(0x00ff88), clamp(change/3,0,1));
+  else c.lerpColors(new THREE.Color(0x331018), new THREE.Color(0xff3b5c), clamp(-change/3,0,1));
+  return c;
+}
+
+const GEO = {ready:false, failed:false};
+const countries = [];          // {name, iso, rings, path (Path2D), bbox}
+const marketByIso = {};
+MARKET_DATA.forEach(m=>{ marketByIso[m.iso] = m; });
+let heatmapOn = true;
+let hoveredCountry = null;
+let baseImageData = null;      // texture snapshot without hover overlay
+
+// borders sit +0.15% above the surface to avoid z-fighting with the globe
+const BORDER_R = GLOBE_R*1.0015;
+const BORDER_COLOR = 0xB4DCFF; // soft white / ice blue (180,220,255)
+const borderMat = new THREE.LineBasicMaterial({color:BORDER_COLOR, transparent:true, opacity:0.35, depthWrite:false});
+const borderGlowMat = new THREE.LineBasicMaterial({color:BORDER_COLOR, transparent:true, opacity:0.15, depthWrite:false, blending:THREE.AdditiveBlending});
+let borderLines = null, borderGlowLines = null;
+
+// hovered country outline — tiny geometry rebuilt on hover change
+const highlightMat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.95, depthWrite:false});
+const highlightLines = new THREE.LineSegments(new THREE.BufferGeometry(), highlightMat);
+scene.add(highlightLines);
+
+// equirect projection into the land canvas (matches SphereGeometry UVs)
+function projX(lon){ return (lon+180)/360*TEX_W; }
+function projY(lat){ return (90-lat)/180*TEX_H; }
+
+function eachRing(geom, cb){
+  if(geom.type==='Polygon') geom.coordinates.forEach(cb);
+  else if(geom.type==='MultiPolygon') geom.coordinates.forEach(poly=>poly.forEach(cb));
+}
+
+// emit line-segment vertex pairs, subdividing long edges (in lat/lon space —
+// political borders follow parallels/meridians) so lines hug the sphere
+function pushSegments(out, a, b, r){
+  const steps = clamp(Math.ceil(Math.max(Math.abs(b[0]-a[0]), Math.abs(b[1]-a[1]))/0.8), 1, 64);
+  let prev = latLonToVec3(a[1], a[0], r);
+  for(let i=1;i<=steps;i++){
+    const t = i/steps;
+    const p = latLonToVec3(lerp(a[1],b[1],t), lerp(a[0],b[0],t), r);
+    out.push(prev.x,prev.y,prev.z, p.x,p.y,p.z);
+    prev = p;
+  }
+}
+
+function buildCountries(features){
+  features.forEach(f=>{
+    if(!f.geometry) return;
+    const path = new Path2D();
+    const rings = [];
+    let minLon=180, maxLon=-180, minLat=90, maxLat=-90;
+    eachRing(f.geometry, ring=>{
+      rings.push(ring);
+      ring.forEach((pt,i)=>{
+        if(pt[0]<minLon) minLon=pt[0]; if(pt[0]>maxLon) maxLon=pt[0];
+        if(pt[1]<minLat) minLat=pt[1]; if(pt[1]>maxLat) maxLat=pt[1];
+        if(i===0) path.moveTo(projX(pt[0]), projY(pt[1]));
+        else path.lineTo(projX(pt[0]), projY(pt[1]));
+      });
+      path.closePath();
+    });
+    const iso = ISO_N3_TO_A2[String(f.id).padStart(3,'0')] || null;
+    countries.push({name:f.properties.name, iso, rings, path, bbox:[minLon,minLat,maxLon,maxLat]});
+  });
+}
+
+// ONE merged LineSegments for every border on the planet (topojson.mesh
+// dedupes shared borders), drawn twice: additive glow pass under a crisp pass
+function buildBorderLines(mesh){
+  const verts = [];
+  mesh.coordinates.forEach(line=>{
+    for(let i=0;i<line.length-1;i++) pushSegments(verts, line[i], line[i+1], BORDER_R);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+  borderGlowLines = new THREE.LineSegments(geo, borderGlowMat);
+  borderLines = new THREE.LineSegments(geo, borderMat);
+  scene.add(borderGlowLines);
+  scene.add(borderLines);
+}
+
+function countryFillStyle(c){
+  if(heatmapOn && c.iso && marketByIso[c.iso]){
+    const fill = new THREE.Color(0x0A1020).lerp(heatColor(marketByIso[c.iso].change), 0.55);
+    return `rgba(${Math.round(fill.r*255)},${Math.round(fill.g*255)},${Math.round(fill.b*255)},0.85)`;
+  }
+  return 'rgba(10,16,32,0.62)'; // deep navy ~60% — night-mode land vs darker ocean
+}
+function redrawLandTexture(){
+  landCtx.clearRect(0,0,TEX_W,TEX_H);
+  countries.forEach(c=>{
+    landCtx.fillStyle = countryFillStyle(c);
+    landCtx.fill(c.path, 'evenodd');
+  });
+  baseImageData = landCtx.getImageData(0,0,TEX_W,TEX_H);
+  applyHoverOverlay();
+}
+function applyHoverOverlay(){
+  if(!baseImageData) return;
+  landCtx.putImageData(baseImageData, 0, 0);
+  if(hoveredCountry){
+    landCtx.fillStyle = 'rgba(150,190,255,0.16)';
+    landCtx.fill(hoveredCountry.path, 'evenodd');
+  }
+  landTexture.needsUpdate = true;
+}
+
+function setHeatmapOn(on){
+  heatmapOn = on;
+  if(GEO.ready) redrawLandTexture();
+}
+
+/* ---- hover picking: raycast point -> lat/lon -> point-in-polygon ---- */
+function pointInCountry(c, lon, lat){
+  const b = c.bbox;
+  if(lon<b[0] || lon>b[2] || lat<b[1] || lat>b[3]) return false;
+  let inside = false; // even-odd over all rings handles holes (e.g. Lesotho)
+  for(const ring of c.rings){
+    for(let i=0, j=ring.length-1; i<ring.length; j=i++){
+      const xi=ring[i][0], yi=ring[i][1], xj=ring[j][0], yj=ring[j][1];
+      if(((yi>lat)!==(yj>lat)) && (lon < (xj-xi)*(lat-yi)/(yj-yi)+xi)) inside = !inside;
+    }
+  }
+  return inside;
+}
+function countryAt(lat, lon){
+  for(const c of countries) if(pointInCountry(c, lon, lat)) return c;
+  return null;
+}
+function setHoveredCountry(c){
+  if(c === hoveredCountry) return;
+  hoveredCountry = c;
+  applyHoverOverlay();
+  highlightLines.geometry.dispose();
+  const geo = new THREE.BufferGeometry();
+  if(c){
+    const verts = [];
+    c.rings.forEach(ring=>{
+      for(let i=0;i<ring.length-1;i++) pushSegments(verts, ring[i], ring[i+1], GLOBE_R*1.0025);
+    });
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+  }
+  highlightLines.geometry = geo;
+}
+
+// parse once at load, during the boot screen; boot holds its last line on GEO
+(async function loadCountryGeometry(){
+  try{
+    const res = await fetch(GEO_URL);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const topo = await res.json();
+    buildCountries(topojson.feature(topo, topo.objects.countries).features);
+    buildBorderLines(topojson.mesh(topo, topo.objects.countries));
+    redrawLandTexture();
+    GEO.ready = true;
+  }catch(err){
+    console.warn('TERRA: country geometry failed to load — continuing without borders.', err);
+    GEO.failed = true;
+  }
+})();
+
+/* ---------------- SESSIONS / BEACONS ---------------- */
+function isSessionOpen(s){
+  try{
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US',{timeZone:s.tz, hour:'2-digit', minute:'2-digit', hour12:false, weekday:'short'}).formatToParts(now);
+    const h = parseInt(parts.find(p=>p.type==='hour').value,10);
+    const m = parseInt(parts.find(p=>p.type==='minute').value,10);
+    const wd = parts.find(p=>p.type==='weekday').value;
+    if(wd==='Sat'||wd==='Sun') return false;
+    const t = h + m/60;
+    return t>=s.open && t<=s.close;
+  }catch(e){ return false; }
+}
+const sessionsGroup = new THREE.Group(); scene.add(sessionsGroup);
+const sessionMarkers = [];
+SESSIONS_DATA.forEach(s=>{
+  const open = isSessionOpen(s);
+  const pos = latLonToVec3(s.lat,s.lon,GLOBE_R*1.01);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:makeGlowTexture(), color: open?0x00ff88:0x445566, transparent:true, opacity:open?1:0.35, depthWrite:false, blending:THREE.AdditiveBlending}));
+  sprite.position.copy(pos); sprite.scale.set(open?0.55:0.3,open?0.55:0.3,1);
+  sessionsGroup.add(sprite);
+  sessionMarkers.push({mesh:sprite, data:s, type:'session', open});
+});
+
+/* ---------------- OIL BARS (instanced) ---------------- */
+const oilGroup = new THREE.Group(); scene.add(oilGroup);
+const oilMarkers = [];
+const maxBpd = Math.max(...OIL_DATA.map(o=>o.bpd));
+OIL_DATA.forEach(o=>{
+  const h = (o.bpd/maxBpd)*1.6 + 0.15;
+  const geo = new THREE.CylinderGeometry(0.045,0.045,h,8);
+  const mat = new THREE.MeshBasicMaterial({color:0xFFB000, transparent:true, opacity:0.85});
+  const mesh = new THREE.Mesh(geo, mat);
+  const base = latLonToVec3(o.lat,o.lon,GLOBE_R*1.001);
+  const outward = base.clone().normalize();
+  mesh.position.copy(base.clone().add(outward.clone().multiplyScalar(h/2)));
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), outward);
+  oilGroup.add(mesh);
+  oilMarkers.push({mesh, data:o, type:'oil'});
+});
+
+/* ---------------- POPULATION HEAT ---------------- */
+const popGroup = new THREE.Group(); scene.add(popGroup);
+POP_HEAT.forEach(p=>{
+  const pos = latLonToVec3(p.lat,p.lon,GLOBE_R*1.002);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:makeGlowTexture(), color:0xB266FF, transparent:true, opacity:0.55*p.intensity, depthWrite:false, blending:THREE.AdditiveBlending}));
+  sprite.position.copy(pos);
+  const s = p.radius*0.16;
+  sprite.scale.set(s,s,1);
+  popGroup.add(sprite);
+});
+
+/* ---------------- MEGA-CITIES ---------------- */
+const citiesGroup = new THREE.Group(); scene.add(citiesGroup);
+const cityMarkers = [];
+const maxPop = Math.max(...CITIES_DATA.map(c=>c.pop));
+CITIES_DATA.forEach(c=>{
+  const base = latLonToVec3(c.lat,c.lon,GLOBE_R*1.001);
+  const outward = base.clone().normalize();
+  const beamH = 0.5 + (c.pop/maxPop)*0.9;
+  const beamGeo = new THREE.CylinderGeometry(0.006,0.006,beamH,6);
+  const beamMat = new THREE.MeshBasicMaterial({color:0x00E5FF, transparent:true, opacity:0.55});
+  const beam = new THREE.Mesh(beamGeo, beamMat);
+  beam.position.copy(base.clone().add(outward.clone().multiplyScalar(beamH/2)));
+  beam.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), outward);
+  citiesGroup.add(beam);
+  const dotSize = 0.05 + (c.pop/maxPop)*0.09;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:makeCircleTexture(), color:0x00E5FF, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending}));
+  sprite.position.copy(base.clone().add(outward.clone().multiplyScalar(beamH)));
+  sprite.scale.set(dotSize,dotSize,1);
+  citiesGroup.add(sprite);
+  cityMarkers.push({mesh:sprite, data:c, type:'city'});
+});
+
+/* ---------------- METALS & MINING ---------------- */
+const metalsGroup = new THREE.Group(); scene.add(metalsGroup);
+const metalMarkers = [];
+METALS_DATA.forEach(m=>{
+  const pos = latLonToVec3(m.lat,m.lon,GLOBE_R*1.006);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:makeCircleTexture(), color:METAL_COLORS[m.metal], transparent:true, depthWrite:false, blending:THREE.AdditiveBlending}));
+  sprite.position.copy(pos); sprite.scale.set(0.14,0.14,1);
+  metalsGroup.add(sprite);
+  metalMarkers.push({mesh:sprite, data:m, type:'metal'});
+});
+
+/* ---------------- TRADE ARCS ---------------- */
+const arcsGroup = new THREE.Group(); scene.add(arcsGroup);
+const arcPulses = [];
+TRADE_ROUTES.forEach(r=>{
+  const a = latLonToVec3(r.from[0], r.from[1], GLOBE_R*1.01);
+  const b = latLonToVec3(r.to[0], r.to[1], GLOBE_R*1.01);
+  const mid = a.clone().add(b).multiplyScalar(0.5);
+  const dist = a.distanceTo(b);
+  mid.normalize().multiplyScalar(GLOBE_R*1.01 + dist*0.35);
+  const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+  const pts = curve.getPoints(64);
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const mat = new THREE.LineBasicMaterial({color:0x7B00FF, transparent:true, opacity:0.35});
+  arcsGroup.add(new THREE.Line(geo, mat));
+  const pulse = new THREE.Sprite(new THREE.SpriteMaterial({map:makeGlowTexture(), color:0x00ff88, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending}));
+  pulse.scale.set(0.22,0.22,1);
+  arcsGroup.add(pulse);
+  arcPulses.push({curve, pulse, t: Math.random(), label:r.label});
+});
+
+/* ============================================================================
+   LAYER TOGGLES
+   ============================================================================ */
+const LAYERS = [
+  {key:'heat',    name:'Market Heatmap', sub:'25 major indices', group:null, on:true},
+  {key:'sessions',name:'Market Sessions', sub:'live open/closed', group:sessionsGroup, on:true},
+  {key:'oil',     name:'Oil',           sub:'top producing regions', group:oilGroup, on:false},
+  {key:'pop',     name:'Population',    sub:'density heat', group:popGroup, on:false},
+  {key:'cities',  name:'Mega-Cities',   sub:'top 20 by population', group:citiesGroup, on:false},
+  {key:'metals',  name:'Metals & Mining', sub:'gold / copper / lithium / REE', group:metalsGroup, on:false},
+  {key:'trade',   name:'Trade Arcs',    sub:'major shipping lanes', group:arcsGroup, on:false},
+];
+sessionsGroup.visible = true;
+oilGroup.visible = false; popGroup.visible = false; citiesGroup.visible = false;
+metalsGroup.visible = false; arcsGroup.visible = false;
+setHeatmapOn(true);
+
+const layerListEl = document.getElementById('layerList');
+LAYERS.forEach((L, idx)=>{
+  const row = document.createElement('div');
+  row.className='layerRow';
+  row.innerHTML = `<div class="lbl"><div>${L.name}</div><div class="k">${L.sub}</div></div><div class="switch ${L.on?'on':''}" data-key="${L.key}"><div class="knob"></div></div>`;
+  layerListEl.appendChild(row);
+});
+function toggleLayer(key){
+  const L = LAYERS.find(l=>l.key===key);
+  L.on = !L.on;
+  if(key==='heat') setHeatmapOn(L.on);
+  else if(L.group) L.group.visible = L.on;
+  document.querySelector(`.switch[data-key="${key}"]`).classList.toggle('on', L.on);
+  updateLegend();
+}
+layerListEl.addEventListener('click', e=>{
+  const sw = e.target.closest('.switch');
+  if(sw) toggleLayer(sw.dataset.key);
+});
+window.addEventListener('keydown', e=>{
+  const map = {'1':'heat','2':'sessions','3':'oil','4':'pop','5':'cities','6':'metals','7':'trade'};
+  if(map[e.key]) toggleLayer(map[e.key]);
+  if(e.key==='r' || e.key==='R') resetView();
+});
+
+const legendEl = document.getElementById('legend');
+function updateLegend(){
+  const metalsOn = LAYERS.find(l=>l.key==='metals').on;
+  if(!metalsOn){ legendEl.style.display='none'; return; }
+  legendEl.style.display='flex';
+  legendEl.innerHTML = Object.entries(METAL_COLORS).map(([k,c])=>
+    `<div class="row"><span class="sw" style="background:#${c.toString(16).padStart(6,'0')}"></span>${k}</div>`).join('');
+}
+
+/* ============================================================================
+   CONTROLS (drag/inertia/zoom, auto-rotate pause/resume)
+   ============================================================================ */
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.5;
+controls.minDistance = 7.2;
+controls.maxDistance = 22;
+controls.enablePan = false;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+let idleTimer = null;
+controls.addEventListener('start', ()=>{
+  controls.autoRotate = false;
+  if(idleTimer) clearTimeout(idleTimer);
+});
+controls.addEventListener('end', ()=>{
+  idleTimer = setTimeout(()=>{ controls.autoRotate = true; }, 5000);
+});
+
+const DEFAULT_CAM = new THREE.Vector3(0,0,13);
+function resetView(){
+  controls.autoRotate = false;
+  const start = camera.position.clone();
+  const startTarget = controls.target.clone();
+  const t0 = performance.now();
+  function anim(){
+    const t = clamp((performance.now()-t0)/900, 0, 1);
+    const e = 1-Math.pow(1-t,3);
+    camera.position.lerpVectors(start, DEFAULT_CAM, e);
+    controls.target.lerpVectors(startTarget, new THREE.Vector3(0,0,0), e);
+    if(t<1) requestAnimationFrame(anim);
+    else { idleTimer = setTimeout(()=>{controls.autoRotate=true;}, 5000); }
+  }
+  anim();
+}
+document.getElementById('resetBtn').addEventListener('click', resetView);
+
+function flyTo(targetPos){
+  controls.autoRotate = false;
+  if(idleTimer) clearTimeout(idleTimer);
+  const dir = targetPos.clone().normalize();
+  const destCam = dir.clone().multiplyScalar(9.5);
+  const start = camera.position.clone();
+  const t0 = performance.now();
+  function anim(){
+    const t = clamp((performance.now()-t0)/1100, 0, 1);
+    const e = 1-Math.pow(1-t,3);
+    camera.position.lerpVectors(start, destCam, e);
+    if(t<1) requestAnimationFrame(anim);
+    else idleTimer = setTimeout(()=>{controls.autoRotate=true;}, 5000);
+  }
+  anim();
+}
+
+/* ============================================================================
+   RAYCASTING: hover tooltip + click profile panel
+   ============================================================================ */
+const raycaster = new THREE.Raycaster();
+raycaster.params.Sprite = {threshold:0.15};
+raycaster.params.Points = {threshold:0.15};
+const mouse = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+
+function allMarkers(){
+  return [...sessionMarkers, ...oilMarkers, ...cityMarkers, ...metalMarkers]
+    .filter(m => LAYERS.find(l=>l.group===m.mesh.parent)?.on !== false);
+}
+function visibleMarkers(){
+  const on = key => LAYERS.find(l=>l.key===key).on;
+  const out = [];
+  if(on('sessions')) out.push(...sessionMarkers);
+  if(on('oil')) out.push(...oilMarkers);
+  if(on('cities')) out.push(...cityMarkers);
+  if(on('metals')) out.push(...metalMarkers);
+  return out;
+}
+
+renderer.domElement.addEventListener('mousemove', e=>{
+  mouse.x = (e.clientX/window.innerWidth)*2-1;
+  mouse.y = -(e.clientY/window.innerHeight)*2+1;
+  raycaster.setFromCamera(mouse, camera);
+  const markers = visibleMarkers();
+  const hits = raycaster.intersectObjects(markers.map(m=>m.mesh));
+  if(hits.length){
+    const hit = markers.find(m=>m.mesh===hits[0].object);
+    setHoveredCountry(null);
+    showTooltip(hit, e.clientX, e.clientY);
+    renderer.domElement.style.cursor='pointer';
+  } else {
+    // no marker under cursor — check for a country on the globe surface
+    let c = null;
+    const gHits = raycaster.intersectObject(globeCore);
+    if(gHits.length){
+      const ll = vec3ToLatLon(gHits[0].point);
+      c = countryAt(ll.lat, ll.lon);
+    }
+    setHoveredCountry(c);
+    if(c) showCountryTooltip(c, e.clientX, e.clientY);
+    else tooltip.style.display='none';
+    renderer.domElement.style.cursor='grab';
+  }
+});
+renderer.domElement.addEventListener('click', e=>{
+  raycaster.setFromCamera(mouse, camera);
+  const markers = visibleMarkers();
+  const hits = raycaster.intersectObjects(markers.map(m=>m.mesh));
+  if(hits.length){
+    const hit = markers.find(m=>m.mesh===hits[0].object);
+    openProfile(hit);
+    flyTo(hit.mesh.position.clone());
+  }
+});
+
+function showTooltip(hit, x, y){
+  const d = hit.data;
+  let html = '';
+  if(hit.type==='session'){
+    html = `<div class="t-title">${d.name} — ${d.city}</div>
+      <div class="t-row"><span>Status</span><span style="color:${hit.open?'#00FF88':'#FF3B5C'}">${hit.open?'OPEN':'CLOSED'}</span></div>`;
+  } else if(hit.type==='oil'){
+    html = `<div class="t-title">${d.name}</div><div class="t-row"><span>Production</span><span>${d.bpd.toFixed(1)}M bpd</span></div>`;
+  } else if(hit.type==='city'){
+    html = `<div class="t-title">${d.name}</div><div class="t-row"><span>Population</span><span>${d.pop.toFixed(1)}M</span></div>`;
+  } else if(hit.type==='metal'){
+    html = `<div class="t-title">${d.name}</div><div class="t-row"><span>Resource</span><span>${d.metal}</span></div>`;
+  }
+  tooltip.innerHTML = html;
+  tooltip.style.left = (x+16)+'px';
+  tooltip.style.top = (y+12)+'px';
+  tooltip.style.display='block';
+}
+
+function showCountryTooltip(c, x, y){
+  const mk = c.iso ? marketByIso[c.iso] : null;
+  let html = `<div class="t-title">${c.name}</div>`;
+  if(mk){
+    const up = mk.change>=0;
+    html += `<div class="t-row"><span>${mk.name}</span><span style="color:${up?'#00FF88':'#FF3B5C'}">${up?'+':''}${mk.change.toFixed(2)}%</span></div>`;
+  }
+  tooltip.innerHTML = html;
+  tooltip.style.left = (x+16)+'px';
+  tooltip.style.top = (y+12)+'px';
+  tooltip.style.display='block';
+}
+
+const profilePanel = document.getElementById('profilePanel');
+const profileBody = document.getElementById('profileBody');
+document.getElementById('profileClose').addEventListener('click', ()=>profilePanel.classList.remove('show'));
+
+function nearestMarket(lat, lon){
+  let best=null, bd=1e9;
+  MARKET_DATA.forEach(m=>{
+    const dd = Math.pow(m.lat-lat,2)+Math.pow(((m.lon-lon+540)%360)-180,2);
+    if(dd<bd){bd=dd;best=m;}
+  });
+  return best;
+}
+function openProfile(hit){
+  const d = hit.data;
+  let title=d.name, sub=hit.type.toUpperCase(), rows=[];
+  if(hit.type==='session'){
+    const mk = nearestMarket(d.lat,d.lon);
+    rows = [
+      ['Status', hit.open?'OPEN':'CLOSED', !hit.open],
+      ['Local Session', `${d.open}:00 – ${d.close}:00`, false],
+      ['Nearby Index', mk?mk.name:'—', false],
+      ['Daily Change', mk?(mk.change>=0?'+':'')+mk.change.toFixed(2)+'%':'—', mk&&mk.change<0],
+    ];
+  } else if(hit.type==='oil'){
+    rows = [['Production', d.bpd.toFixed(1)+'M bpd', false], ['Type','Crude Oil Reserve', false]];
+  } else if(hit.type==='city'){
+    const mk = nearestMarket(d.lat,d.lon);
+    rows = [['Population', d.pop.toFixed(1)+'M', false], ['Region Index', mk?mk.name:'—', false],
+            ['Index Change', mk?(mk.change>=0?'+':'')+mk.change.toFixed(2)+'%':'—', mk&&mk.change<0]];
+  } else if(hit.type==='metal'){
+    rows = [['Resource', d.metal, false], ['Classification','Major Production Zone', false]];
+  }
+  profileBody.innerHTML = `<h2>${title}</h2><div class="sub">${sub}</div>` +
+    rows.map(r=>`<div class="statRow"><span class="k">${r[0]}</span><span class="v ${r[2]?'neg':''}">${r[1]}</span></div>`).join('') +
+    `<div class="resList">${Object.keys(METAL_COLORS).includes(d.metal||'')?`<span class="tag">${d.metal}</span>`:''}</div>`;
+  profilePanel.classList.add('show');
+}
+
+/* ============================================================================
+   TOP BAR CLOCKS
+   ============================================================================ */
+const CLOCKS = [
+  {city:'NEW YORK', tz:'America/New_York', session:SESSIONS_DATA[0]},
+  {city:'LONDON', tz:'Europe/London', session:SESSIONS_DATA[1]},
+  {city:'TOKYO', tz:'Asia/Tokyo', session:SESSIONS_DATA[3]},
+  {city:'SYDNEY', tz:'Australia/Sydney', session:SESSIONS_DATA[5]},
+];
+const clocksEl = document.getElementById('clocks');
+CLOCKS.forEach(c=>{
+  const div = document.createElement('div');
+  div.className='clock';
+  div.innerHTML = `<div class="city">${c.city}</div><div class="time" data-tz="${c.tz}">--:--</div><div class="pill" data-session="${c.city}">--</div>`;
+  clocksEl.appendChild(div);
+});
+function updateClocks(){
+  const now = new Date();
+  document.getElementById('utcTime').textContent = now.toISOString().substr(11,8);
+  clocksEl.querySelectorAll('.time').forEach(el=>{
+    const tz = el.dataset.tz;
+    el.textContent = new Intl.DateTimeFormat('en-GB',{timeZone:tz, hour:'2-digit', minute:'2-digit'}).format(now);
+  });
+  CLOCKS.forEach(c=>{
+    const open = isSessionOpen(c.session);
+    const pillEl = clocksEl.querySelector(`.pill[data-session="${c.city}"]`);
+    pillEl.textContent = open?'OPEN':'CLOSED';
+    pillEl.className = 'pill '+(open?'open':'closed');
+  });
+  // refresh session beacons state occasionally
+}
+updateClocks();
+setInterval(updateClocks, 1000);
+
+// recompute sun direction from real UTC time (subsolar point)
+function updateSun(){
+  const now = new Date();
+  const dayOfYear = Math.floor((now - new Date(Date.UTC(now.getUTCFullYear(),0,0)))/86400000);
+  const decl = -23.44 * Math.cos(2*Math.PI/365 * (dayOfYear+10));
+  const utcH = now.getUTCHours() + now.getUTCMinutes()/60;
+  const subLon = (12 - utcH) * 15;
+  const v = latLonToVec3(decl, subLon, 1);
+  sunDir.copy(v);
+}
+updateSun();
+setInterval(updateSun, 60000);
+
+/* ============================================================================
+   TICKER
+   ============================================================================ */
+const tickerEl = document.getElementById('ticker');
+function buildTicker(){
+  const items = [...TICKER_DATA, ...TICKER_DATA]; // loop
+  tickerEl.innerHTML = items.map(t=>{
+    const up = t.chg>=0;
+    return `<div class="tItem"><span class="sym">${t.sym}</span><span class="val">${t.val}</span><span class="chg ${up?'up':'down'}">${up?'+':''}${t.chg.toFixed(2)}%</span></div>`;
+  }).join('');
+}
+buildTicker();
+
+/* ============================================================================
+   RESIZE + RENDER LOOP
+   ============================================================================ */
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  const t = clock.getElapsedTime();
+
+  controls.update();
+  starGroup.rotation.y += 0.00006;
+
+  // borders ease brighter as you zoom in (0.35 planet view -> 0.55 close)
+  if(borderLines){
+    const zoomT = clamp((controls.maxDistance - camera.position.length())/(controls.maxDistance - controls.minDistance), 0, 1);
+    borderMat.opacity = lerp(0.35, 0.55, zoomT);
+    borderGlowMat.opacity = lerp(0.15, 0.24, zoomT);
+  }
+
+  // session beacon pulse
+  sessionMarkers.forEach((m,i)=>{
+    if(m.open){
+      const s = 0.5 + Math.sin(t*2.4 + i)*0.08;
+      m.mesh.scale.set(s,s,1);
+    }
+  });
+
+  // trade arc pulses
+  arcPulses.forEach(p=>{
+    p.t += dt*0.18;
+    if(p.t>1) p.t=0;
+    const pos = p.curve.getPoint(p.t);
+    p.pulse.position.copy(pos);
+  });
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
