@@ -184,6 +184,38 @@ body.page {
 /* nested in the globe topbar's center cluster instead of floating centered */
 #topCenter .theme-toggle { position: static; transform: none; }
 
+/* ---------------- GLOBE VIEW-MODE TOGGLE (stylized vs. realistic Blue Marble) --- */
+/* same pill/icon family as .theme-toggle, static in the topbar's center cluster */
+.mode-toggle {
+  position: static; display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  background: var(--panel-bg); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 10px; color: var(--muted); font-family: var(--display);
+  transition: background .3s ease, border-color .3s ease;
+}
+.mode-toggle:hover { border-color: var(--cyan); }
+.mode-toggle svg { display: block; }
+.mode-toggle .mt-grid { color: var(--cyan); transition: color .3s ease; }
+.mode-toggle .mt-earth { border-radius: 50%; transition: filter .3s ease, opacity .3s ease; }
+.mode-toggle .mt-track {
+  position: relative; width: 30px; height: 16px; border-radius: 999px; flex-shrink: 0;
+  background: var(--control-bg); border: 1px solid var(--control-border);
+  transition: background .3s ease, border-color .3s ease;
+}
+.mode-toggle .mt-knob {
+  position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+  transition: transform .3s cubic-bezier(.2,.9,.25,1), background .3s ease, box-shadow .3s ease;
+  transform: translateX(0); /* resting near the grid icon = stylized (default) */
+}
+.mode-toggle .mt-grid { opacity: 1; }
+.mode-toggle .mt-earth { opacity: 0.55; filter: saturate(0.5); }
+.mode-toggle.is-realistic .mt-knob {
+  transform: translateX(14px); /* resting near the earth icon = realistic */
+  background: #4FA8E8; box-shadow: 0 0 8px #4FA8E8;
+}
+.mode-toggle.is-realistic .mt-grid { opacity: 0.5; }
+.mode-toggle.is-realistic .mt-earth { opacity: 1; filter: saturate(1); }
+
 /* ---------------- NAV (injected by include.js) ---------------- */
 .nav {
   position: sticky; top: 0; z-index: 100;
@@ -567,6 +599,12 @@ body.globe-page { overflow: hidden; height: 100vh; }
   #legend { display: none !important; }
   #profilePanel { width: calc(100% - 28px); left: auto; right: -100%; }
   #profilePanel.show { right: 14px; }
+  /* two topbar toggle pills (theme + globe mode) need the room */
+  #topbar { padding: 0 10px; }
+  #brand { gap: 6px; font-size: 14px; letter-spacing: 2px; }
+  #topCenter { gap: 6px; }
+  .theme-toggle, .mode-toggle { padding: 5px 7px; gap: 5px; }
+  #utcWrap .utc-label { display: none; }
 }
 
 /* globe topbar inline nav links */
