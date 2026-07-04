@@ -226,13 +226,16 @@
   const globeCore = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R, 96, 96), globeMat);
   scene.add(globeCore);
 
+  // invisible proxy sphere raycasting always targets, regardless of which
+  // display mode (stylized vector globe vs. realistic Blue Marble) is
+  // currently visible — keeps hover/click/labels decoupled from view mode
+  const pickSphere = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R, 48, 48), new THREE.MeshBasicMaterial({ visible: false }));
+  scene.add(pickSphere);
+
   // subtle lat/lon grid
   const gridMat = new THREE.LineBasicMaterial({ color: PAL.grid, transparent: true, opacity: 0.18 });
-  (function () {
-    const g = new THREE.SphereGeometry(GLOBE_R * 1.001, 24, 16);
-    const wire = new THREE.WireframeGeometry(g);
-    scene.add(new THREE.LineSegments(wire, gridMat));
-  })();
+  const gridLines = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(GLOBE_R * 1.001, 24, 16)), gridMat);
+  scene.add(gridLines);
 
   // atmosphere — soft natural blue rim like Earth's real atmospheric limb
   // from space (dark theme); barely-there in light theme's daytime-UI look
@@ -251,6 +254,55 @@
     side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
   });
   scene.add(new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R * 1.12, 64, 64), atmoMat));
+
+  /* -------------------------------------------------------------- view mode
+     stylized (vector heatmap globe, default) vs. realistic "Blue Marble"
+     (real NASA day/night/cloud textures). Borders, markers, search, and
+     tooltips are unaffected — they raycast against pickSphere above and
+     just layer on top of whichever base sphere is visible. */
+  const MODE_KEY = "somnus-globe-mode";
+  let GLOBE_MODE = "stylized";
+  try { if (localStorage.getItem(MODE_KEY) === "realistic") GLOBE_MODE = "realistic"; } catch (e) {}
+  let realisticEarth = null;
+  const modeToggleBtn = $("globeModeToggle");
+
+  function ensureRealisticEarth() {
+    if (realisticEarth || !window.SOMNUS_EARTH) return realisticEarth;
+    toast("Loading realistic Earth…");
+    realisticEarth = window.SOMNUS_EARTH.create(THREE, {
+      radius: GLOBE_R,
+      shimmerColor: PAL.day,
+      nightIntensity: 1, // globe.html always shows the true day/night terminator
+      onReady: function () { realisticEarth.setSunDirection(sunDir); },
+      onError: function () {
+        toast("Realistic view failed to load — showing stylized view.", true);
+        setGlobeMode("stylized");
+      },
+    });
+    scene.add(realisticEarth.group);
+    realisticEarth.group.visible = GLOBE_MODE === "realistic";
+    return realisticEarth;
+  }
+
+  function setGlobeMode(mode) {
+    mode = mode === "realistic" ? "realistic" : "stylized";
+    GLOBE_MODE = mode;
+    try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+    const realistic = mode === "realistic";
+    if (realistic) ensureRealisticEarth();
+    globeCore.visible = !realistic;
+    gridLines.visible = !realistic;
+    if (realisticEarth) realisticEarth.group.visible = realistic;
+    if (modeToggleBtn) {
+      modeToggleBtn.classList.toggle("is-realistic", realistic);
+      modeToggleBtn.setAttribute("aria-checked", String(realistic));
+      modeToggleBtn.setAttribute("aria-label", realistic ? "Switch to stylized view" : "Switch to realistic view");
+      modeToggleBtn.setAttribute("title", realistic ? "Stylized view" : "Realistic view");
+    }
+  }
+  if (GLOBE_MODE === "realistic") ensureRealisticEarth();
+  setGlobeMode(GLOBE_MODE);
+  if (modeToggleBtn) modeToggleBtn.addEventListener("click", () => setGlobeMode(GLOBE_MODE === "realistic" ? "stylized" : "realistic"));
 
   /* -------------------------------------------------------------- country geometry */
   function heatColor(change) {
@@ -747,7 +799,7 @@
       return;
     }
     let c = null;
-    const gHits = raycaster.intersectObject(globeCore);
+    const gHits = raycaster.intersectObject(pickSphere);
     if (gHits.length) { const ll = vec3ToLatLon(gHits[0].point); c = countryAt(ll.lat, ll.lon); }
     setHoveredCountry(c);
     if (c) showCountryTooltip(c, clientX, clientY);
@@ -765,7 +817,7 @@
       flyTo(hit.mesh.position.clone());
       return;
     }
-    const gHits = raycaster.intersectObject(globeCore);
+    const gHits = raycaster.intersectObject(pickSphere);
     if (gHits.length) {
       const ll = vec3ToLatLon(gHits[0].point);
       const c = countryAt(ll.lat, ll.lon);
@@ -938,6 +990,7 @@
     const utcH = now.getUTCHours() + now.getUTCMinutes() / 60;
     const subLon = (12 - utcH) * 15;
     sunDir.copy(latLonToVec3(decl, subLon, 1));
+    if (realisticEarth) realisticEarth.setSunDirection(sunDir);
   }
   updateSun(); setInterval(updateSun, 60000);
 
@@ -966,6 +1019,7 @@
   function applyGlobeTheme(themeName) {
     PAL = GLOBE_PALETTE[themeName] || GLOBE_PALETTE.dark;
     renderer.setClearColor(PAL.clear, 1);
+    if (realisticEarth && !realisticEarth.state.ready) realisticEarth.setShimmerColor(PAL.day);
     globeMat.uniforms.dayColor.value.setHex(PAL.day);
     globeMat.uniforms.nightColor.value.setHex(PAL.night);
     globeMat.uniforms.deepColor.value.setHex(PAL.deep);
@@ -1044,6 +1098,7 @@
 
     controls.update();
     starGroup.rotation.y += 0.00006;
+    if (realisticEarth) realisticEarth.tick(dt);
 
     // eased zoom (from +/- buttons) — applied after controls.update so it wins
     if (zoomTarget != null) {
