@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markets — SOMNUS</title>
+<meta name="description" content="SOMNUS markets dashboard: major world indices, top movers, and live exchange session clocks — the same data that drives the globe.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/css/style.css">
+</head>
+<body class="page" data-page="markets">
+<div data-nav></div>
+
+<main class="wrap">
+  <div class="page-head">
+    <div class="eyebrow">Markets Dashboard</div>
+    <h1 style="font-size:clamp(1.8rem,4vw,2.8rem);">Global indices at a glance</h1>
+    <p>Live-shaped mock data, shared with the <a href="./globe.html" style="color:var(--green)">globe</a>.
+      Click any column to sort.</p>
+  </div>
+
+  <!-- TOP MOVERS -->
+  <div class="eyebrow">Top Movers</div>
+  <div class="movers" id="movers"></div>
+
+  <!-- INDEX TABLE -->
+  <div class="eyebrow">All Indices</div>
+  <div class="tbl-wrap">
+    <table class="mk" id="mkTable">
+      <thead>
+        <tr>
+          <th data-k="name">Index <span class="arw"></span></th>
+          <th data-k="iso">Country <span class="arw"></span></th>
+          <th class="num" data-k="index">Level <span class="arw"></span></th>
+          <th class="num" data-k="change">Change % <span class="arw"></span></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- SESSION CLOCKS -->
+  <div class="eyebrow" style="margin-top:44px;">Exchange Sessions</div>
+  <div class="clocks-row" id="clocksRow"></div>
+</main>
+
+<div data-footer></div>
+
+<script src="./assets/js/data.js"></script>
+<script src="./assets/js/include.js"></script>
+<script>
+(function () {
+  var D = window.SOMNUS_DATA;
+  var chgColor = function (v) { return v >= 0 ? "var(--green)" : "var(--red)"; };
+  var fmtChg = function (v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; };
+
+  // ---- movers ----
+  var sorted = D.MARKET_DATA.slice().sort(function (a, b) { return b.change - a.change; });
+  var movers = [sorted[0], sorted[1], sorted[sorted.length - 2], sorted[sorted.length - 1]];
+  document.getElementById("movers").innerHTML = movers.map(function (m) {
+    return '<div class="mover"><div class="k">' + (m.change >= 0 ? "Gainer" : "Decliner") + '</div>' +
+      '<div class="name">' + m.name + '</div>' +
+      '<div class="chg" style="color:' + chgColor(m.change) + '">' + fmtChg(m.change) + '</div></div>';
+  }).join("");
+
+  // ---- sortable table ----
+  var tbody = document.querySelector("#mkTable tbody");
+  var state = { k: "change", dir: -1 };
+  function flag(iso) {
+    var m = D.MARKET_DATA.find(function (x) { return x.iso === iso; });
+    var up = m && m.change >= 0;
+    return '<span class="dot-flag" style="background:' + (up ? "var(--green)" : "var(--red)") + '"></span>';
+  }
+  function render() {
+    var rows = D.MARKET_DATA.slice().sort(function (a, b) {
+      var av = a[state.k], bv = b[state.k];
+      if (typeof av === "string") return av.localeCompare(bv) * state.dir;
+      return (av - bv) * state.dir;
+    });
+    tbody.innerHTML = rows.map(function (m) {
+      return "<tr>" +
+        "<td>" + flag(m.iso) + m.name + "</td>" +
+        "<td>" + m.iso + "</td>" +
+        '<td class="num">' + m.value + "</td>" +
+        '<td class="num" style="color:' + chgColor(m.change) + '">' + fmtChg(m.change) + "</td>" +
+        "</tr>";
+    }).join("");
+    document.querySelectorAll("#mkTable th").forEach(function (th) {
+      var a = th.querySelector(".arw");
+      if (a) a.textContent = th.dataset.k === state.k ? (state.dir === 1 ? "▲" : "▼") : "";
+    });
+  }
+  document.querySelectorAll("#mkTable th").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var k = th.dataset.k;
+      if (state.k === k) state.dir *= -1;
+      else { state.k = k; state.dir = (k === "name" || k === "iso") ? 1 : -1; }
+      render();
+    });
+  });
+  render();
+
+  // ---- session clocks ----
+  var clocks = [
+    { city: "NEW YORK", tz: "America/New_York", session: D.SESSIONS_DATA[0] },
+    { city: "LONDON", tz: "Europe/London", session: D.SESSIONS_DATA[1] },
+    { city: "TOKYO", tz: "Asia/Tokyo", session: D.SESSIONS_DATA[3] },
+    { city: "SYDNEY", tz: "Australia/Sydney", session: D.SESSIONS_DATA[5] },
+  ];
+  var row = document.getElementById("clocksRow");
+  row.innerHTML = clocks.map(function (c) {
+    return '<div class="clock-card"><div class="city">' + c.city + '</div>' +
+      '<div class="t" data-tz="' + c.tz + '">--:--</div>' +
+      '<span class="pill" data-city="' + c.city + '">--</span></div>';
+  }).join("");
+  function tick() {
+    var now = new Date();
+    row.querySelectorAll(".t").forEach(function (el) {
+      el.textContent = new Intl.DateTimeFormat("en-GB", { timeZone: el.dataset.tz, hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(now);
+    });
+    clocks.forEach(function (c) {
+      var open = window.SOMNUS.isSessionOpen(c.session);
+      var pill = row.querySelector('.pill[data-city="' + c.city + '"]');
+      if (pill) { pill.textContent = open ? "OPEN" : "CLOSED"; pill.className = "pill " + (open ? "open" : "closed"); }
+    });
+  }
+  tick(); setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About — SOMNUS</title>
+<meta name="description" content="What SOMNUS is, the data layers it renders, the tech behind the globe, and where the prototype is headed.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/css/style.css">
+</head>
+<body class="page" data-page="about">
+<div data-nav></div>
+
+<main class="wrap section">
+  <div class="prose">
+    <div class="eyebrow">About</div>
+    <h1 style="font-size:clamp(1.9rem,4vw,2.9rem);">Somnus is the world economy, rendered as a planet.</h1>
+    <p>Somnus (codename <strong style="color:var(--text)">TERRA</strong> in the command center) is a
+      browser-native financial visualization. Instead of a wall of tickers, it puts global markets where
+      they actually happen — on a live, holographic 3D Earth you can spin, search, and drill into. It's a
+      prototype built on mock data, structured so a live backend can slot in without touching the render code.</p>
+
+    <h2>The data layers</h2>
+    <p>Seven layers stack on the globe. To keep the planet readable, the command center renders the market
+      heatmap plus at most two heavy layers at once.</p>
+    <ul class="layer-list">
+      <li><span class="sw" style="background:var(--green)"></span><div><span class="lname">Market Heatmap</span> — 25 major indices tint their countries green→red by daily change.</div></li>
+      <li><span class="sw" style="background:var(--green)"></span><div><span class="lname">Market Sessions</span> — exchange beacons pulse open or closed against real time zones.</div></li>
+      <li><span class="sw" style="background:var(--amber)"></span><div><span class="lname">Oil</span> — top producing regions sized by barrels per day.</div></li>
+      <li><span class="sw" style="background:var(--purple)"></span><div><span class="lname">Population</span> — density heat over the world's most crowded corridors.</div></li>
+      <li><span class="sw" style="background:var(--cyan)"></span><div><span class="lname">Mega-Cities</span> — the 20 largest urban centers as light beams.</div></li>
+      <li><span class="sw" style="background:#FFD700"></span><div><span class="lname">Metals &amp; Mining</span> — gold, copper, lithium, and rare-earth production zones.</div></li>
+      <li><span class="sw" style="background:var(--purple)"></span><div><span class="lname">Trade Arcs</span> — major shipping lanes drawn as animated great-circle arcs.</div></li>
+    </ul>
+
+    <h2>Tech stack</h2>
+    <ul class="stack-list">
+      <li><div><span class="lname">Three.js (r128)</span> — WebGL rendering: globe shader, atmosphere, merged border geometry, instanced markers.</div></li>
+      <li><div><span class="lname">Natural Earth via world-atlas TopoJSON</span> — real country borders at 50m resolution, parsed with topojson-client.</div></li>
+      <li><div><span class="lname">Vanilla JS + CSS</span> — no framework, no build step, no backend. Every dependency is a CDN URL.</div></li>
+      <li><div><span class="lname">Static hosting</span> — published from a single branch to GitHub Pages; every push goes live.</div></li>
+    </ul>
+
+    <h2>Roadmap</h2>
+    <div class="roadmap">
+      <div class="road-item done"><span class="ph">Shipped</span><div>Real 50m country geography, market heatmap, session beacons, resource layers, and a multi-page product shell.</div></div>
+      <div class="road-item now"><span class="ph">In progress</span><div>Occlusion-aware markers, cross-fading layers with a two-layer cap, country search, and zoom-gated labels.</div></div>
+      <div class="road-item next"><span class="ph">Next</span><div>Live market feeds via WebSocket, historical playback, watchlists, and a shareable deep-link for any country or view.</div></div>
+    </div>
+
+    <div style="margin-top:40px;">
+      <a class="btn btn-primary" href="./globe.html">◉ Launch Globe</a>
+    </div>
+  </div>
+</main>
+
+<div data-footer></div>
+
+<script src="./assets/js/include.js"></script>
+</body>
+</html>

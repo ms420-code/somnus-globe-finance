@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Globe — SOMNUS Command Center</title>
+<meta name="description" content="SOMNUS command center: a live 3D financial Earth with market heatmaps, exchange sessions, and resource layers on real country geography.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/css/style.css">
+</head>
+<body class="globe-page" data-page="globe">
+<div id="app">
+  <canvas id="globeCanvas"></canvas>
+
+  <!-- LOADING -->
+  <div id="loading">
+    <div class="logo">SOMNUS</div>
+    <div id="bootLines"></div>
+    <div class="bootBar"><div id="bootFill"></div></div>
+  </div>
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div id="brand"><span class="dot"></span> <a href="./index.html">SOMNUS</a>
+      <nav id="topNav" aria-label="Primary">
+        <a href="./index.html">Home</a>
+        <a href="./markets.html">Markets</a>
+        <a href="./about.html">About</a>
+      </nav></div>
+    <div id="clocks"></div>
+    <div id="utcWrap"><span id="utcTime">--:--:--</span> UTC</div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="search-box">
+    <input id="countrySearch" type="text" placeholder="Search a country…" aria-label="Search for a country" autocomplete="off">
+    <div id="searchResults" role="listbox"></div>
+  </div>
+
+  <!-- LEFT LAYER PANEL -->
+  <div id="layerPanel">
+    <div class="phead">
+      <h3>DATA LAYERS</h3>
+      <button id="panelCollapse" aria-label="Collapse panel">&#8249;</button>
+    </div>
+    <div class="pbody">
+      <div id="layerList"></div>
+      <button id="resetBtn">⟲ RESET VIEW</button>
+      <div id="hints">[1–7] toggle layers &nbsp; [R] reset<br>drag = rotate · scroll = zoom</div>
+    </div>
+  </div>
+
+  <!-- VIEW CONTROLS -->
+  <div id="viewControls">
+    <button class="vc-btn" id="vcZoomIn" aria-label="Zoom in">+</button>
+    <button class="vc-btn" id="vcZoomOut" aria-label="Zoom out">−</button>
+    <button class="vc-btn active" id="vcRotate" aria-label="Toggle auto-rotate" aria-pressed="true">⟳</button>
+    <button class="vc-btn" id="vcReset" aria-label="Reset view">⌂</button>
+    <button class="vc-btn" id="vcFull" aria-label="Toggle fullscreen">⛶</button>
+  </div>
+
+  <div id="legend"></div>
+  <div id="countryLabels"></div>
+  <div id="tooltip"></div>
+
+  <!-- RIGHT DETAIL PANEL -->
+  <div id="profilePanel">
+    <button class="close" id="profileClose" aria-label="Close panel">✕</button>
+    <div id="profileBody"></div>
+  </div>
+
+  <!-- TICKER -->
+  <div id="tickerWrap"><div id="ticker"></div></div>
+
+  <div id="vignette"></div>
+  <div id="overlay"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script src="./assets/js/data.js"></script>
+<script src="./assets/js/include.js"></script>
+<script src="./assets/js/globe.js"></script>
+</body>
+</html>
