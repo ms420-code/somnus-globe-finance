@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>(function(){try{var t=localStorage.getItem('somnus-theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SOMNUS — The world's markets. One planet.</title>
 <meta name="description" content="SOMNUS is a 3D financial command center — monitor global markets, exchange sessions, and resource flows on a live holographic Earth.">
@@ -83,6 +84,14 @@
 (function () {
   var canvas = document.getElementById("heroGlobe");
   if (!canvas || !window.THREE) return;
+  var HERO_PALETTE = {
+    dark:  { sphere: 0x0a1a2c, grid: 0x2a5a70, dots: 0x00ff88, atmo: 0x00ff88 },
+    light: { sphere: 0xDCE4EE, grid: 0x9fb4cc, dots: 0x00A85C, atmo: 0x00A85C },
+  };
+  function theme() {
+    return (window.SOMNUS && window.SOMNUS.getTheme) ? window.SOMNUS.getTheme() :
+      (document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
+  }
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
   function size() {
     var w = canvas.clientWidth, h = canvas.clientHeight;
@@ -97,13 +106,12 @@
   var globe = new THREE.Group(); scene.add(globe);
 
   // core sphere
-  globe.add(new THREE.Mesh(
-    new THREE.SphereGeometry(R, 64, 64),
-    new THREE.MeshBasicMaterial({ color: 0x0a1a2c })
-  ));
+  var sphereMat = new THREE.MeshBasicMaterial({ color: 0x0a1a2c });
+  globe.add(new THREE.Mesh(new THREE.SphereGeometry(R, 64, 64), sphereMat));
   // lat/lon grid
+  var gridMat = new THREE.LineBasicMaterial({ color: 0x2a5a70, transparent: true, opacity: 0.4 });
   var wire = new THREE.WireframeGeometry(new THREE.SphereGeometry(R * 1.002, 32, 20));
-  globe.add(new THREE.LineSegments(wire, new THREE.LineBasicMaterial({ color: 0x2a5a70, transparent: true, opacity: 0.4 })));
+  globe.add(new THREE.LineSegments(wire, gridMat));
   // dot points scattered on the surface for a "data" feel
   var n = 1400, pos = new Float32Array(n * 3);
   for (var i = 0; i < n; i++) {
@@ -113,19 +121,27 @@
     pos[i * 3 + 2] = rr * Math.sin(ph) * Math.sin(th);
   }
   var pg = new THREE.BufferGeometry(); pg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  globe.add(new THREE.Points(pg, new THREE.PointsMaterial({ color: 0x00ff88, size: 0.05, transparent: true, opacity: 0.75 })));
+  var dotsMat = new THREE.PointsMaterial({ color: 0x00ff88, size: 0.05, transparent: true, opacity: 0.75 });
+  globe.add(new THREE.Points(pg, dotsMat));
   // atmosphere
-  var atmo = new THREE.Mesh(
-    new THREE.SphereGeometry(R * 1.16, 48, 48),
-    new THREE.ShaderMaterial({
-      uniforms: { c: { value: new THREE.Color(0x00ff88) } },
-      vertexShader: "varying vec3 vN; void main(){ vN = normalize(normalMatrix*normal); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-      fragmentShader: "uniform vec3 c; varying vec3 vN; void main(){ float i = pow(0.7 - dot(vN, vec3(0,0,1.0)), 3.0); gl_FragColor = vec4(c, clamp(i,0.0,1.0)*0.85); }",
-      side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false
-    })
-  );
-  scene.add(atmo);
+  var atmoMat = new THREE.ShaderMaterial({
+    uniforms: { c: { value: new THREE.Color(0x00ff88) } },
+    vertexShader: "varying vec3 vN; void main(){ vN = normalize(normalMatrix*normal); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
+    fragmentShader: "uniform vec3 c; varying vec3 vN; void main(){ float i = pow(0.7 - dot(vN, vec3(0,0,1.0)), 3.0); gl_FragColor = vec4(c, clamp(i,0.0,1.0)*0.85); }",
+    side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false
+  });
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.16, 48, 48), atmoMat));
   globe.rotation.x = 0.35;
+
+  function applyHeroTheme() {
+    var p = HERO_PALETTE[theme()] || HERO_PALETTE.dark;
+    sphereMat.color.setHex(p.sphere);
+    gridMat.color.setHex(p.grid);
+    dotsMat.color.setHex(p.dots);
+    atmoMat.uniforms.c.value.setHex(p.atmo);
+  }
+  applyHeroTheme();
+  window.addEventListener("somnus-theme-change", applyHeroTheme);
 
   var running = true;
   document.addEventListener("visibilitychange", function () { running = !document.hidden; });

@@ -2,7 +2,8 @@
    SOMNUS — shared chrome injector (no-build). Renders nav + footer + favicon
    into every page so markup stays DRY. Set the current page with
    <body data-page="home|globe|markets|about">.
-   Also exposes SOMNUS.toast() and SOMNUS.isSessionOpen() for all pages.
+   Also exposes SOMNUS.toast(), SOMNUS.isSessionOpen(), and the
+   dark/light theme system (SOMNUS.getTheme / setTheme) for all pages.
    ============================================================================ */
 (function () {
   "use strict";
@@ -28,6 +29,53 @@
   fav.href = "data:image/svg+xml," + encodeURIComponent(favSvg);
   document.head.appendChild(fav);
 
+  /* ---- theme (dark/light, persisted, synced across pages) ----
+     The <head> of every page also runs a tiny inline script that applies
+     the saved theme to <html data-theme> before first paint (no flash).
+     This module owns the toggle UI markup + keeps everything in sync. */
+  const THEME_KEY = "somnus-theme";
+  function getTheme() {
+    return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  }
+  function setTheme(theme, opts) {
+    theme = theme === "light" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+    document.querySelectorAll(".theme-toggle").forEach(function (el) { syncToggleEl(theme, el); });
+    if (!opts || !opts.silent) {
+      window.dispatchEvent(new CustomEvent("somnus-theme-change", { detail: { theme: theme } }));
+    }
+  }
+  function syncToggleEl(theme, el) {
+    el.setAttribute("aria-checked", String(theme === "light"));
+    el.setAttribute("aria-label", theme === "light" ? "Switch to dark theme" : "Switch to light theme");
+  }
+  const THEME_TOGGLE_HTML =
+    '<button class="theme-toggle" id="themeToggle" type="button" role="switch" aria-checked="false" ' +
+    'aria-label="Switch to light theme" title="Toggle light / dark theme">' +
+    '<svg class="tt-sun" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="4.4" fill="currentColor" stroke="none"/>' +
+    '<line x1="12" y1="1.5" x2="12" y2="3.5"/><line x1="12" y1="20.5" x2="12" y2="22.5"/>' +
+    '<line x1="1.5" y1="12" x2="3.5" y2="12"/><line x1="20.5" y1="12" x2="22.5" y2="12"/>' +
+    '<line x1="4.4" y1="4.4" x2="5.8" y2="5.8"/><line x1="18.2" y1="18.2" x2="19.6" y2="19.6"/>' +
+    '<line x1="4.4" y1="19.6" x2="5.8" y2="18.2"/><line x1="18.2" y1="5.8" x2="19.6" y2="4.4"/>' +
+    "</svg>" +
+    '<span class="tt-track"><span class="tt-knob"></span></span>' +
+    '<svg class="tt-moon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">' +
+    '<path d="M20.2 14.9A8.6 8.6 0 1 1 9.1 3.8a7 7 0 0 0 11.1 11.1z"/>' +
+    "</svg>" +
+    "</button>";
+  function wireThemeToggles() {
+    document.querySelectorAll(".theme-toggle").forEach(function (el) {
+      syncToggleEl(getTheme(), el);
+      el.addEventListener("click", function () { setTheme(getTheme() === "light" ? "dark" : "light"); });
+    });
+  }
+  // keep other tabs/pages in sync if the theme changes elsewhere
+  window.addEventListener("storage", function (e) {
+    if (e.key === THEME_KEY && e.newValue) setTheme(e.newValue);
+  });
+
   // ---- nav ----
   function buildNav() {
     const nav = document.createElement("header");
@@ -41,6 +89,7 @@
     nav.innerHTML =
       '<a class="wordmark" href="./index.html" aria-label="Somnus home">' +
       '<span class="dot"></span>SOMNUS</a>' +
+      THEME_TOGGLE_HTML +
       '<button class="nav-burger" aria-label="Toggle menu" aria-expanded="false">&#9776;</button>' +
       '<nav class="nav-links" aria-label="Primary">' + links + "</nav>";
     return nav;
@@ -61,8 +110,9 @@
   }
 
   function mount() {
-    // the globe page has its own command-center topbar; skip the shared nav
-    // there unless it explicitly opts in with a [data-nav] mount point.
+    // the globe page has its own command-center topbar (with its own
+    // .theme-toggle markup) instead of the shared nav, unless it opts in
+    // with a [data-nav] mount point.
     const navMount = document.querySelector("[data-nav]");
     if (navMount) navMount.replaceWith(buildNav());
     else if (current !== "globe") document.body.insertAdjacentElement("afterbegin", buildNav());
@@ -80,6 +130,8 @@
         burger.setAttribute("aria-expanded", String(open));
       });
     }
+
+    wireThemeToggles();
   }
 
   if (document.readyState === "loading") {
@@ -123,5 +175,10 @@
     } catch (e) { return false; }
   }
 
-  window.SOMNUS = { toast: toast, isSessionOpen: isSessionOpen };
+  window.SOMNUS = {
+    toast: toast,
+    isSessionOpen: isSessionOpen,
+    getTheme: getTheme,
+    setTheme: setTheme,
+  };
 })();

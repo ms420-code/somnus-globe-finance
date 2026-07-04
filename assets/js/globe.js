@@ -8,6 +8,42 @@
   const D = window.SOMNUS_DATA;
   const toast = (window.SOMNUS && window.SOMNUS.toast) || function (m) { console.warn(m); };
   const isSessionOpen = (window.SOMNUS && window.SOMNUS.isSessionOpen) || function () { return false; };
+  const getTheme = (window.SOMNUS && window.SOMNUS.getTheme) || function () {
+    return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  };
+
+  /* -------------------------------------------------------------- theme
+     Every color the globe scene paints comes from this map so the light/dark
+     toggle can re-skin the whole command center without rebuilding geometry. */
+  const GLOBE_PALETTE = {
+    dark: {
+      clear: 0x070D16, day: 0x081a2e, night: 0x040a14, rim: 0x00ff88,
+      border: 0xB4DCFF, grid: 0x1f4a5e,
+      landShades: [0x141f33, 0x17263c, 0x1b2c45, 0x20334e], landBase: 0x0A1020,
+      heatPosDim: 0x123322, heatNegDim: 0x331018, heatNegBright: 0xff3b5c,
+      star1: 0xffffff, star2: 0x88aaff,
+      hoverOverlay: "rgba(150,190,255,0.18)", highlight: 0xffffff,
+      sessionOpen: 0x00ff88, sessionClosed: 0x445566,
+      oil: 0xFFB000, pop: 0xB266FF, cityBeam: 0x00E5FF, cityDot: 0x00E5FF,
+      tradeLine: 0x9B5CFF, tradePulse: 0x00ff88, legendClosed: "#445566",
+    },
+    light: {
+      // matches the CSS --green-rgb/--cyan-rgb/--amber-rgb/--red-rgb light
+      // values in style.css (deepened slightly from the nominal brand hues
+      // so text/markers stay readable against the light ocean)
+      clear: 0xDCE4EE, day: 0xEDF2F8, night: 0xB9C6D6, rim: 0x008045,
+      border: 0x5C7A99, grid: 0x8FA6C0,
+      landShades: [0xB9C4D3, 0xB0BCCC, 0xA7B4C6, 0x9FADC0], landBase: 0xC2CEDD,
+      heatPosDim: 0xBFE8D2, heatNegDim: 0xF3CBD3, heatNegBright: 0xD32B48,
+      star1: 0x5C6B7E, star2: 0x7A8FAE,
+      hoverOverlay: "rgba(20,40,70,0.16)", highlight: 0x0B1220,
+      sessionOpen: 0x008045, sessionClosed: 0x7C8AA0,
+      oil: 0x9E5F00, pop: 0x6A00E0, cityBeam: 0x007895, cityDot: 0x007895,
+      tradeLine: 0x6A00E0, tradePulse: 0x008045, legendClosed: "#7C8AA0",
+    },
+  };
+  let PAL = GLOBE_PALETTE[getTheme()];
+  const hexCss = (n) => "#" + n.toString(16).padStart(6, "0");
 
   /* -------------------------------------------------------------- config */
   const GEO_RESOLUTION = "50m"; // finer coastlines than 110m; SG/HK exist here
@@ -103,7 +139,7 @@
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x070D16, 1); // deep space backdrop so the globe disc always reads
+  renderer.setClearColor(PAL.clear, 1); // deep space backdrop so the globe disc always reads
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 2000);
@@ -126,8 +162,9 @@
     const mat = new THREE.PointsMaterial({ color, size, map: circleTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     return new THREE.Points(geo, mat);
   }
-  starGroup.add(makeStars(1200, 400, 1.4, 0xffffff));
-  starGroup.add(makeStars(500, 700, 2.2, 0x88aaff));
+  const stars1 = makeStars(1200, 400, 1.4, PAL.star1);
+  const stars2 = makeStars(500, 700, 2.2, PAL.star2);
+  starGroup.add(stars1); starGroup.add(stars2);
 
   // land fill texture (equirectangular, sampled by globe shader)
   const TEX_W = 2048, TEX_H = 1024;
@@ -142,9 +179,9 @@
   const globeMat = new THREE.ShaderMaterial({
     uniforms: {
       sunDirection: { value: sunDir },
-      dayColor: { value: new THREE.Color(0x081a2e) },
-      nightColor: { value: new THREE.Color(0x040a14) },
-      rimColor: { value: new THREE.Color(0x00ff88) },
+      dayColor: { value: new THREE.Color(PAL.day) },
+      nightColor: { value: new THREE.Color(PAL.night) },
+      rimColor: { value: new THREE.Color(PAL.rim) },
       landTex: { value: landTexture },
     },
     vertexShader:
@@ -171,16 +208,16 @@
   scene.add(globeCore);
 
   // subtle lat/lon grid
+  const gridMat = new THREE.LineBasicMaterial({ color: PAL.grid, transparent: true, opacity: 0.18 });
   (function () {
     const g = new THREE.SphereGeometry(GLOBE_R * 1.001, 24, 16);
     const wire = new THREE.WireframeGeometry(g);
-    const mat = new THREE.LineBasicMaterial({ color: 0x1f4a5e, transparent: true, opacity: 0.18 });
-    scene.add(new THREE.LineSegments(wire, mat));
+    scene.add(new THREE.LineSegments(wire, gridMat));
   })();
 
   // atmosphere
   const atmoMat = new THREE.ShaderMaterial({
-    uniforms: { glowColor: { value: new THREE.Color(0x00ff88) } },
+    uniforms: { glowColor: { value: new THREE.Color(PAL.rim) } },
     vertexShader:
       "varying vec3 vNormal; void main(){ vNormal = normalize(normalMatrix * normal);" +
       "gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
@@ -195,12 +232,13 @@
   /* -------------------------------------------------------------- country geometry */
   function heatColor(change) {
     const c = new THREE.Color();
-    if (change >= 0) c.lerpColors(new THREE.Color(0x123322), new THREE.Color(0x00ff88), clamp(change / 3, 0, 1));
-    else c.lerpColors(new THREE.Color(0x331018), new THREE.Color(0xff3b5c), clamp(-change / 3, 0, 1));
+    if (change >= 0) c.lerpColors(new THREE.Color(PAL.heatPosDim), new THREE.Color(PAL.sessionOpen), clamp(change / 3, 0, 1));
+    else c.lerpColors(new THREE.Color(PAL.heatNegDim), new THREE.Color(PAL.heatNegBright), clamp(-change / 3, 0, 1));
     return c;
   }
-  // 4 subtle land shade steps (all lighter than the dark ocean base)
-  const LAND_SHADES = ["#141f33", "#17263c", "#1b2c45", "#20334e"];
+  // 4 subtle land shade steps (all lighter than the dark ocean base — or
+  // darker than the light ocean base, in light theme)
+  let LAND_SHADES = PAL.landShades.map(hexCss);
   const countries = [];
   const marketByIso = {};
   D.MARKET_DATA.forEach((m) => { marketByIso[m.iso] = m; });
@@ -226,11 +264,10 @@
     }
   }
 
-  const BORDER_COLOR = 0xB4DCFF;
-  const borderMat = new THREE.LineBasicMaterial({ color: BORDER_COLOR, transparent: true, opacity: 0.45, depthWrite: false });
-  const borderGlowMat = new THREE.LineBasicMaterial({ color: BORDER_COLOR, transparent: true, opacity: 0.14, depthWrite: false, blending: THREE.AdditiveBlending });
+  const borderMat = new THREE.LineBasicMaterial({ color: PAL.border, transparent: true, opacity: 0.45, depthWrite: false });
+  const borderGlowMat = new THREE.LineBasicMaterial({ color: PAL.border, transparent: true, opacity: 0.14, depthWrite: false, blending: THREE.AdditiveBlending });
   let borderLines = null, borderGlowLines = null;
-  const highlightMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthWrite: false });
+  const highlightMat = new THREE.LineBasicMaterial({ color: PAL.highlight, transparent: true, opacity: 0.95, depthWrite: false });
   const highlightLines = new THREE.LineSegments(new THREE.BufferGeometry(), highlightMat);
   scene.add(highlightLines);
 
@@ -282,7 +319,7 @@
 
   function countryFillStyle(c) {
     if (heatmapOn && c.iso && marketByIso[c.iso]) {
-      const fill = new THREE.Color(0x0A1020).lerp(heatColor(marketByIso[c.iso].change), 0.6);
+      const fill = new THREE.Color(PAL.landBase).lerp(heatColor(marketByIso[c.iso].change), 0.6);
       return "rgba(" + Math.round(fill.r * 255) + "," + Math.round(fill.g * 255) + "," + Math.round(fill.b * 255) + ",0.9)";
     }
     return c.shade; // varied navy shade so neighbors read apart with no data on
@@ -297,7 +334,7 @@
     if (!baseImageData) return;
     landCtx.putImageData(baseImageData, 0, 0);
     if (hoveredCountry) {
-      landCtx.fillStyle = "rgba(150,190,255,0.18)";
+      landCtx.fillStyle = PAL.hoverOverlay;
       landCtx.fill(hoveredCountry.path, "evenodd");
     }
     landTexture.needsUpdate = true;
@@ -344,7 +381,7 @@
   D.SESSIONS_DATA.forEach((s) => {
     const open = isSessionOpen(s);
     const pos = latLonToVec3(s.lat, s.lon, GLOBE_R * 1.01);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: open ? 0x00ff88 : 0x445566, transparent: true, opacity: open ? 1 : 0.35, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: open ? PAL.sessionOpen : PAL.sessionClosed, transparent: true, opacity: open ? 1 : 0.35, depthWrite: false, blending: THREE.AdditiveBlending }));
     sprite.position.copy(pos); sprite.scale.set(open ? 0.55 : 0.3, open ? 0.55 : 0.3, 1);
     sessionsGroup.add(sprite);
     sessionMarkers.push({ mesh: sprite, data: s, type: "session", open });
@@ -353,7 +390,7 @@
   const maxBpd = Math.max.apply(null, D.OIL_DATA.map((o) => o.bpd));
   D.OIL_DATA.forEach((o) => {
     const h = (o.bpd / maxBpd) * 1.6 + 0.15;
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, h, 8), new THREE.MeshBasicMaterial({ color: 0xFFB000, transparent: true, opacity: 0.85 }));
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, h, 8), new THREE.MeshBasicMaterial({ color: PAL.oil, transparent: true, opacity: 0.85 }));
     const base = latLonToVec3(o.lat, o.lon, GLOBE_R * 1.001);
     const outward = base.clone().normalize();
     mesh.position.copy(base.clone().add(outward.clone().multiplyScalar(h / 2)));
@@ -362,11 +399,13 @@
     oilMarkers.push({ mesh, data: o, type: "oil", anchor: base });
   });
 
+  const popMarkers = [];
   D.POP_HEAT.forEach((p) => {
     const pos = latLonToVec3(p.lat, p.lon, GLOBE_R * 1.002);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xB266FF, transparent: true, opacity: 0.55 * p.intensity, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: PAL.pop, transparent: true, opacity: 0.55 * p.intensity, depthWrite: false, blending: THREE.AdditiveBlending }));
     sprite.position.copy(pos); const s = p.radius * 0.16; sprite.scale.set(s, s, 1);
     popGroup.add(sprite);
+    popMarkers.push({ mesh: sprite, data: p });
   });
 
   const maxPop = Math.max.apply(null, D.CITIES_DATA.map((c) => c.pop));
@@ -374,12 +413,12 @@
     const base = latLonToVec3(c.lat, c.lon, GLOBE_R * 1.001);
     const outward = base.clone().normalize();
     const beamH = 0.5 + (c.pop / maxPop) * 0.9;
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, beamH, 6), new THREE.MeshBasicMaterial({ color: 0x00E5FF, transparent: true, opacity: 0.55 }));
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, beamH, 6), new THREE.MeshBasicMaterial({ color: PAL.cityBeam, transparent: true, opacity: 0.55 }));
     beam.position.copy(base.clone().add(outward.clone().multiplyScalar(beamH / 2)));
     beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), outward);
     citiesGroup.add(beam);
     const dotSize = 0.05 + (c.pop / maxPop) * 0.09;
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: circleTex, color: 0x00E5FF, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: circleTex, color: PAL.cityDot, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     sprite.position.copy(base.clone().add(outward.clone().multiplyScalar(beamH)));
     sprite.scale.set(dotSize, dotSize, 1);
     citiesGroup.add(sprite);
@@ -394,6 +433,7 @@
     metalMarkers.push({ mesh: sprite, data: m, type: "metal", anchor: pos });
   });
 
+  const tradeLines = [];
   D.TRADE_ROUTES.forEach((r) => {
     const a = latLonToVec3(r.from[0], r.from[1], GLOBE_R * 1.01);
     const b = latLonToVec3(r.to[0], r.to[1], GLOBE_R * 1.01);
@@ -402,12 +442,23 @@
     mid.normalize().multiplyScalar(GLOBE_R * 1.01 + dist * 0.35);
     const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
     const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(64));
-    arcsGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x9B5CFF, transparent: true, opacity: 0.4 })));
-    const pulse = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0x00ff88, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const lineMat = new THREE.LineBasicMaterial({ color: PAL.tradeLine, transparent: true, opacity: 0.4 });
+    arcsGroup.add(new THREE.Line(geo, lineMat));
+    tradeLines.push(lineMat);
+    const pulse = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: PAL.tradePulse, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     pulse.scale.set(0.22, 0.22, 1);
     arcsGroup.add(pulse);
     arcPulses.push({ curve, pulse, t: Math.random() });
   });
+
+  // additively-blended sprites wash out on a light ocean; flip them to
+  // normal blending (and a touch more opacity) when the light theme is on
+  const additiveSprites = []
+    .concat(sessionMarkers.map((m) => ({ mat: m.mesh.material, baseOpacity: m.mesh.material.opacity })))
+    .concat(popMarkers.map((m) => ({ mat: m.mesh.material, baseOpacity: m.mesh.material.opacity })))
+    .concat(cityMarkers.map((m) => ({ mat: m.mesh.material, baseOpacity: m.mesh.material.opacity })))
+    .concat(metalMarkers.map((m) => ({ mat: m.mesh.material, baseOpacity: m.mesh.material.opacity })))
+    .concat(arcPulses.map((p) => ({ mat: p.pulse.material, baseOpacity: p.pulse.material.opacity })));
 
   /* -------------------------------------------------------------- layer system (cross-fade + cap) */
   const LAYERS = [
@@ -489,12 +540,12 @@
       });
     }
     if (LAYERS.find((l) => l.key === "sessions").on) {
-      rows.push('<div class="row"><span class="sw" style="background:#00FF88"></span>session open</div>');
-      rows.push('<div class="row"><span class="sw" style="background:#445566"></span>session closed</div>');
+      rows.push('<div class="row"><span class="sw" style="background:var(--green)"></span>session open</div>');
+      rows.push('<div class="row"><span class="sw" style="background:' + PAL.legendClosed + '"></span>session closed</div>');
     }
     if (LAYERS.find((l) => l.key === "heat").on) {
-      rows.push('<div class="row"><span class="sw" style="background:#00FF88"></span>index up</div>');
-      rows.push('<div class="row"><span class="sw" style="background:#FF3B5C"></span>index down</div>');
+      rows.push('<div class="row"><span class="sw" style="background:var(--green)"></span>index up</div>');
+      rows.push('<div class="row"><span class="sw" style="background:var(--red)"></span>index down</div>');
     }
     legendEl.innerHTML = rows.join("");
     legendEl.style.display = rows.length ? "flex" : "none";
@@ -713,12 +764,12 @@
   function showCountryTooltip(c, x, y) {
     const mk = c.iso ? marketByIso[c.iso] : null;
     let html = '<div class="t-title">' + c.name + "</div>";
-    if (mk) { const up = mk.change >= 0; html += '<div class="t-row"><span>' + mk.name + '</span><span style="color:' + (up ? "#00FF88" : "#FF3B5C") + '">' + (up ? "+" : "") + mk.change.toFixed(2) + "%</span></div>"; }
+    if (mk) { const up = mk.change >= 0; html += '<div class="t-row"><span>' + mk.name + '</span><span style="color:' + (up ? "var(--green)" : "var(--red)") + '">' + (up ? "+" : "") + mk.change.toFixed(2) + "%</span></div>"; }
     placeTooltip(html, x, y);
   }
   function showMarkerTooltip(hit, x, y) {
     const d = hit.data; let html = "";
-    if (hit.type === "session") html = '<div class="t-title">' + d.name + " — " + d.city + '</div><div class="t-row"><span>Status</span><span style="color:' + (hit.open ? "#00FF88" : "#FF3B5C") + '">' + (hit.open ? "OPEN" : "CLOSED") + "</span></div>";
+    if (hit.type === "session") html = '<div class="t-title">' + d.name + " — " + d.city + '</div><div class="t-row"><span>Status</span><span style="color:' + (hit.open ? "var(--green)" : "var(--red)") + '">' + (hit.open ? "OPEN" : "CLOSED") + "</span></div>";
     else if (hit.type === "oil") html = '<div class="t-title">' + d.name + '</div><div class="t-row"><span>Production</span><span>' + d.bpd.toFixed(1) + "M bpd</span></div>";
     else if (hit.type === "city") html = '<div class="t-title">' + d.name + '</div><div class="t-row"><span>Population</span><span>' + d.pop.toFixed(1) + "M</span></div>";
     else if (hit.type === "metal") html = '<div class="t-title">' + d.name + '</div><div class="t-row"><span>Resource</span><span>' + d.metal + "</span></div>";
@@ -887,6 +938,45 @@
       if (mk) { flyTo(latLonToVec3(mk.lat, mk.lon, GLOBE_R), 8.2); const c = countries.find((x) => x.iso === mk.iso); if (c) openCountryProfile(c); }
     });
   }
+
+  /* -------------------------------------------------------------- theme switching (re-skins live scene) */
+  function applyGlobeTheme(themeName) {
+    PAL = GLOBE_PALETTE[themeName] || GLOBE_PALETTE.dark;
+    renderer.setClearColor(PAL.clear, 1);
+    globeMat.uniforms.dayColor.value.setHex(PAL.day);
+    globeMat.uniforms.nightColor.value.setHex(PAL.night);
+    globeMat.uniforms.rimColor.value.setHex(PAL.rim);
+    atmoMat.uniforms.glowColor.value.setHex(PAL.rim);
+    gridMat.color.setHex(PAL.grid);
+    borderMat.color.setHex(PAL.border);
+    borderGlowMat.color.setHex(PAL.border);
+    highlightMat.color.setHex(PAL.highlight);
+    stars1.material.color.setHex(PAL.star1);
+    stars2.material.color.setHex(PAL.star2);
+
+    LAND_SHADES = PAL.landShades.map(hexCss);
+    countries.forEach((c, idx) => { c.shade = LAND_SHADES[idx % LAND_SHADES.length]; });
+    if (GEO.ready) redrawLandTexture();
+
+    // additive glow sprites wash out over a light ocean — swap to normal
+    // blending (with a floor on opacity) whenever the light theme is active
+    const isLight = themeName === "light";
+    const blending = isLight ? THREE.NormalBlending : THREE.AdditiveBlending;
+    additiveSprites.forEach((s) => {
+      s.mat.blending = blending;
+      s.mat.opacity = isLight ? Math.max(s.baseOpacity, 0.85) : s.baseOpacity;
+      s.mat.needsUpdate = true;
+    });
+    sessionMarkers.forEach((m) => m.mesh.material.color.setHex(m.open ? PAL.sessionOpen : PAL.sessionClosed));
+    oilMarkers.forEach((m) => m.mesh.material.color.setHex(PAL.oil));
+    popMarkers.forEach((m) => m.mesh.material.color.setHex(PAL.pop));
+    cityMarkers.forEach((m) => { m.mesh.material.color.setHex(PAL.cityDot); if (m.beam) m.beam.material.color.setHex(PAL.cityBeam); });
+    tradeLines.forEach((mat) => mat.color.setHex(PAL.tradeLine));
+    arcPulses.forEach((p) => p.pulse.material.color.setHex(PAL.tradePulse));
+
+    updateLegend();
+  }
+  window.addEventListener("somnus-theme-change", (e) => applyGlobeTheme(e.detail.theme));
 
   /* -------------------------------------------------------------- geometry load (graceful) */
   (async function loadCountryGeometry() {
