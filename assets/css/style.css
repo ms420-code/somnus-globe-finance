@@ -57,8 +57,9 @@
   --vignette-alpha: 0.5;
 
   /* globe command-center chrome background (the DOM layer behind the canvas,
-     matched by GLOBE_PALETTE.clear in globe.js) */
-  --globe-app-bg: #070D16;
+     matched by GLOBE_PALETTE.clear in globe.js) — deep space so the
+     realistic ocean-blue Earth pops like a planet against the void */
+  --globe-app-bg: #05070D;
 
   --display: 'Space Grotesk', system-ui, sans-serif;
   --mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;

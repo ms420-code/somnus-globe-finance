@@ -17,9 +17,16 @@
      toggle can re-skin the whole command center without rebuilding geometry. */
   const GLOBE_PALETTE = {
     dark: {
-      clear: 0x070D16, day: 0x081a2e, night: 0x040a14, rim: 0x00ff88,
+      // realistic deep-ocean blue (Apple Maps globe style) instead of a flat
+      // near-black — day/night are the sunlit/shadow tones, deep/shallow
+      // drive the disc-edge-darker, center-lighter depth shading in the
+      // shader (see globeMat below). atmo is the outer atmosphere rim glow,
+      // now a natural sky blue instead of neon — kept off the planet itself.
+      clear: 0x05070D,
+      day: 0x1B3A5C, night: 0x142C47, deep: 0x142C47, shallow: 0x2A4E75,
+      atmo: 0x5AC8FA, atmoIntensity: 0.75,
       border: 0xB4DCFF, grid: 0x1f4a5e,
-      landShades: [0x141f33, 0x17263c, 0x1b2c45, 0x20334e], landBase: 0x0A1020,
+      landShades: [0x0A0F18, 0x0D131D, 0x101823, 0x131D29], landBase: 0x080C13,
       heatPosDim: 0x123322, heatNegDim: 0x331018, heatNegBright: 0xff3b5c,
       star1: 0xffffff, star2: 0x88aaff,
       hoverOverlay: "rgba(150,190,255,0.18)", highlight: 0xffffff,
@@ -28,12 +35,15 @@
       tradeLine: 0x9B5CFF, tradePulse: 0x00ff88, legendClosed: "#445566",
     },
     light: {
-      // matches the CSS --green-rgb/--cyan-rgb/--amber-rgb/--red-rgb light
-      // values in style.css (deepened slightly from the nominal brand hues
-      // so text/markers stay readable against the light ocean)
-      clear: 0xDCE4EE, day: 0xEDF2F8, night: 0xB9C6D6, rim: 0x008045,
-      border: 0x5C7A99, grid: 0x8FA6C0,
-      landShades: [0xB9C4D3, 0xB0BCCC, 0xA7B4C6, 0x9FADC0], landBase: 0xC2CEDD,
+      // lighter natural sea blue (same depth treatment as dark), warm
+      // light gray-green land so it reads against the blue without going
+      // realistic-textured (still flat vector fills per the site's style),
+      // and a very faint atmosphere since it's daytime-UI, not "space."
+      clear: 0xDCE4EE,
+      day: 0xA8C4DC, night: 0x93B3D0, deep: 0x93B3D0, shallow: 0xBDD3E6,
+      atmo: 0xCFE8FF, atmoIntensity: 0.18,
+      border: 0x9AAABB, grid: 0x8FA6C0,
+      landShades: [0xD8DFD0, 0xD2D9C9, 0xCCD3C2, 0xC6CDBB], landBase: 0xD8DFD0,
       heatPosDim: 0xBFE8D2, heatNegDim: 0xF3CBD3, heatNegBright: 0xD32B48,
       star1: 0x5C6B7E, star2: 0x7A8FAE,
       hoverOverlay: "rgba(20,40,70,0.16)", highlight: 0x0B1220,
@@ -181,7 +191,8 @@
       sunDirection: { value: sunDir },
       dayColor: { value: new THREE.Color(PAL.day) },
       nightColor: { value: new THREE.Color(PAL.night) },
-      rimColor: { value: new THREE.Color(PAL.rim) },
+      deepColor: { value: new THREE.Color(PAL.deep) },
+      shallowColor: { value: new THREE.Color(PAL.shallow) },
       landTex: { value: landTexture },
     },
     vertexShader:
@@ -189,18 +200,26 @@
       "void main(){ vNormal = normalize(normalMatrix * normal); vUv = uv;" +
       "gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
     fragmentShader:
-      "uniform vec3 sunDirection; uniform vec3 dayColor; uniform vec3 nightColor; uniform vec3 rimColor;" +
+      "uniform vec3 sunDirection; uniform vec3 dayColor; uniform vec3 nightColor;" +
+      "uniform vec3 deepColor; uniform vec3 shallowColor;" +
       "uniform sampler2D landTex; varying vec3 vNormal; varying vec2 vUv;" +
       "void main(){" +
       "  float ndotl = dot(normalize(vNormal), normalize(sunDirection));" +
       "  float mixF = smoothstep(-0.15, 0.15, ndotl);" +
-      "  vec3 base = mix(nightColor, dayColor, mixF);" +
+      // camera-facing factor: ~1 at the center of the visible disc, ~0 at
+      // the silhouette edge — stands in for real per-pixel depth/curvature
+      // so the ocean isn't a flat color (darker rim, soft center highlight)
+      "  float facing = clamp(dot(normalize(vNormal), vec3(0.0,0.0,1.0)), 0.0, 1.0);" +
+      "  vec3 ocean = mix(nightColor, dayColor, mixF);" +
+      "  ocean = mix(deepColor, ocean, pow(facing, 0.6));" +
+      "  ocean = mix(ocean, shallowColor, pow(facing, 6.0) * mixF * 0.5);" +
+      // faint specular sheen near the sub-solar highlight — real water has
+      // a soft light response; keep the exponent high and the gain tiny
+      "  float sheen = pow(facing, 40.0) * mixF;" +
+      "  ocean += vec3(0.65, 0.78, 0.92) * sheen * 0.12;" +
       "  vec4 land = texture2D(landTex, vUv);" +
       "  vec3 landCol = land.rgb * mix(0.55, 1.25, mixF) + vec3(0.02,0.035,0.06);" +
-      "  base = mix(base, landCol, land.a);" +
-      "  float term = 1.0 - abs(ndotl);" +
-      "  term = pow(term, 8.0) * smoothstep(-0.2,0.2,ndotl) * smoothstep(0.2,-0.2,ndotl);" +
-      "  base += rimColor * term * 0.55;" +
+      "  vec3 base = mix(ocean, landCol, land.a);" +
       "  gl_FragColor = vec4(base, 1.0);" +
       "}",
   });
@@ -215,16 +234,20 @@
     scene.add(new THREE.LineSegments(wire, gridMat));
   })();
 
-  // atmosphere
+  // atmosphere — soft natural blue rim like Earth's real atmospheric limb
+  // from space (dark theme); barely-there in light theme's daytime-UI look
   const atmoMat = new THREE.ShaderMaterial({
-    uniforms: { glowColor: { value: new THREE.Color(PAL.rim) } },
+    uniforms: {
+      glowColor: { value: new THREE.Color(PAL.atmo) },
+      intensity: { value: PAL.atmoIntensity },
+    },
     vertexShader:
       "varying vec3 vNormal; void main(){ vNormal = normalize(normalMatrix * normal);" +
       "gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
     fragmentShader:
-      "uniform vec3 glowColor; varying vec3 vNormal;" +
+      "uniform vec3 glowColor; uniform float intensity; varying vec3 vNormal;" +
       "void main(){ float i = pow(0.68 - dot(vNormal, vec3(0,0,1.0)), 3.0);" +
-      "gl_FragColor = vec4(glowColor, clamp(i,0.0,1.0)*0.85); }",
+      "gl_FragColor = vec4(glowColor, clamp(i,0.0,1.0)*intensity); }",
     side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
   });
   scene.add(new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R * 1.12, 64, 64), atmoMat));
@@ -945,8 +968,10 @@
     renderer.setClearColor(PAL.clear, 1);
     globeMat.uniforms.dayColor.value.setHex(PAL.day);
     globeMat.uniforms.nightColor.value.setHex(PAL.night);
-    globeMat.uniforms.rimColor.value.setHex(PAL.rim);
-    atmoMat.uniforms.glowColor.value.setHex(PAL.rim);
+    globeMat.uniforms.deepColor.value.setHex(PAL.deep);
+    globeMat.uniforms.shallowColor.value.setHex(PAL.shallow);
+    atmoMat.uniforms.glowColor.value.setHex(PAL.atmo);
+    atmoMat.uniforms.intensity.value = PAL.atmoIntensity;
     gridMat.color.setHex(PAL.grid);
     borderMat.color.setHex(PAL.border);
     borderGlowMat.color.setHex(PAL.border);
